@@ -90,7 +90,7 @@ function migrateTask(t: Record<string, unknown>, i: number): Bot {
   }
 }
 
-export const HUES = ['#54B9A6', '#F19D38', '#6464EF', '#885CF5', '#3C82F6', '#ED712E', '#54B9A6', '#F19D38']
+export const HUES = ['#54B9A6', '#F19D38', '#6464EF', '#885CF5', '#3C82F6', '#ED712E', '#EC4899', '#10B981']
 
 export { createBotStore as createTaskStore }
 export type { Bot as TaskRecord }

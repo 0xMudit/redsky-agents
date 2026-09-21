@@ -35,7 +35,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 }
 
 function demoApi(): RedSkyApi {
-  const HUES = ['#54B9A6', '#F19D38', '#6464EF', '#885CF5', '#3C82F6', '#ED712E']
+  const HUES = ['#54B9A6', '#F19D38', '#6464EF', '#885CF5', '#3C82F6', '#ED712E', '#EC4899', '#10B981']
   const now = Date.now()
   let bots: Bot[] = [
     {
