@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
 import * as path from 'node:path'
+import { autoUpdater } from 'electron-updater'
 import { createAgent, JOB_TEMPLATES, type AgentHandle } from './agent'
 import { audit } from './audit'
 import { createConnectorStore } from './connectors'
@@ -12,6 +13,7 @@ import { createScheduler, type SchedulerHandle } from './scheduler'
 import { startServer, serverEvents, stop as stopServer } from './server'
 import { createSettingsStore } from './settings'
 import { tools } from './tools'
+import { checkOpenCode, composeFeedbackUrl, redactedLogTail } from './beta'
 import { previewOf } from '../shared/visible'
 import type { ModelRef } from './http'
 import type { AppSettings, Bot, ConnectorStatus, EventEnvelope, NoticeKind } from '../shared/types'
@@ -65,6 +67,23 @@ function onAgentEvent(evt: EventEnvelope): void {
   }
 }
 
+/**
+ * Returns the best available app icon for the current platform.
+ * Falls back gracefully if build/ icons were not generated — Electron will
+ * use its default icon rather than crashing.
+ */
+function resolveAppIcon(): string | undefined {
+  const buildDir = path.join(__dirname, '..', 'build')
+  const candidates =
+    process.platform === 'darwin'
+      ? [path.join(buildDir, 'icon.icns'), path.join(buildDir, 'icon.png')]
+      : process.platform === 'win32'
+        ? [path.join(buildDir, 'icon.ico'), path.join(buildDir, 'icon.png')]
+        : [path.join(buildDir, 'icon.png')]
+  const { existsSync } = require('node:fs') as typeof import('node:fs')
+  return candidates.find(existsSync)
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -73,7 +92,7 @@ function createWindow(): void {
     minHeight: 640,
     backgroundColor: '#141412',
     title: 'Red Sky',
-    icon: path.join(__dirname, '..', 'build', 'icon.ico'),
+    icon: resolveAppIcon(),
     frame: false,
     autoHideMenuBar: true,
     webPreferences: {
@@ -193,8 +212,48 @@ function wireIpc(): void {
     return { ok: true }
   })
 
-  ipcMain.handle('rs:files', async (_e, rel?: string) => requireAgent().listFiles(rel))
-  ipcMain.handle('rs:fileContent', async (_e, rel: string) => requireAgent().readFile(rel))
+  ipcMain.handle('rs:files', async (_e, rel?: string) => {
+    // Try the OpenCode /file endpoint first; fall back to the local workspace walker
+    // if it returns nothing (endpoint not supported in this OpenCode version) or errors.
+    try {
+      const nodes = await requireAgent().listFiles(rel)
+      if (nodes.length > 0) return nodes
+    } catch {
+      /* fall through to local */
+    }
+    // Local fallback: read the workspace directory directly
+    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
+    const { workspaceDir: wsDir } = require('./paths') as typeof import('./paths')
+    try {
+      const base = rel && rel !== '.' ? path.join(wsDir(), rel) : wsDir()
+      const entries = readdirSync(base, { withFileTypes: true })
+      return entries
+        .filter((e) => !e.name.startsWith('.') || e.name === '.env.example')
+        .map((e) => ({
+          name: e.name,
+          path: rel && rel !== '.' ? `${rel}/${e.name}` : e.name,
+          type: e.isDirectory() ? 'directory' : 'file',
+        }))
+    } catch {
+      return []
+    }
+  })
+
+  ipcMain.handle('rs:fileContent', async (_e, rel: string) => {
+    // Try OpenCode /file/content endpoint first; fall back to reading the workspace file directly.
+    try {
+      return await requireAgent().readFile(rel)
+    } catch {
+      /* fall through to local */
+    }
+    const { readFileSync } = require('node:fs') as typeof import('node:fs')
+    const { workspaceDir: wsDir } = require('./paths') as typeof import('./paths')
+    const abs = path.resolve(wsDir(), path.normalize(rel).replace(/^[/\\]+/, ''))
+    // Ensure the resolved path stays inside the workspace (path traversal guard).
+    // Must include path.sep suffix to prevent workspace-evil/ bypassing startsWith().
+    if (abs !== wsDir() && !abs.startsWith(wsDir() + path.sep)) throw new Error('path escapes workspace')
+    return readFileSync(abs, 'utf8')
+  })
 
   ipcMain.handle('rs:listMemories', async (_e, botId?: string) => requireAgent().memory.list(botId))
 
@@ -299,6 +358,37 @@ function wireIpc(): void {
     return { ok: true }
   })
 
+  ipcMain.handle('rs:setupCheck', async () => ({
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    opencode: checkOpenCode(),
+    models: baseUrl ? (await listModels(baseUrl)).length : 0,
+    status: baseUrl ? 'online' : 'starting',
+    bots: agent?.listBots().length ?? 0,
+    routines: scheduler?.rows().length ?? 0,
+    memories: agent?.memory.list().length ?? 0,
+    logTailRedacted: redactedLogTail(),
+  }))
+
+  ipcMain.handle('rs:openFeedback', async () => {
+    const check = checkOpenCode()
+    const models = baseUrl ? await listModels(baseUrl) : []
+    const tail = redactedLogTail()
+    const url = composeFeedbackUrl({
+      appVersion: app.getVersion(),
+      platform: process.platform,
+      status: baseUrl ? 'online' : 'starting',
+      opencode: check,
+      models: models.length,
+      bots: agent?.listBots().length ?? 0,
+      routines: scheduler?.rows().length ?? 0,
+      memories: agent?.memory.list().length ?? 0,
+      logTailRedacted: tail,
+    })
+    void shell.openExternal(url)
+    return { ok: true }
+  })
+
   ipcMain.on('win:minimize', () => mainWindow?.minimize())
   ipcMain.on('win:maximize', () => {
     if (!mainWindow) return
@@ -348,6 +438,48 @@ app.whenReady().then(async () => {
   agent.events.on('event', (evt) => onAgentEvent(evt as EventEnvelope))
   createWindow()
   broadcast({ source: 'status', state: 'starting', detail: 'starting OpenCode…' })
+
+  // Auto-updater: only runs in packaged builds, not during `npm start`.
+  // Checks GitHub Releases for a newer version; notifies the user silently.
+  if (app.isPackaged) {
+    autoUpdater.logger = log as Parameters<typeof autoUpdater.setFeedURL>[0] extends never ? never : typeof log
+    autoUpdater.autoDownload = true
+    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.on('update-available', (info) => {
+      log.info('update.available', { version: info.version })
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('rs:event', {
+          source: 'status',
+          state: 'online',
+          detail: `Update v${info.version} downloading…`,
+        })
+      }
+    })
+    autoUpdater.on('update-downloaded', (info) => {
+      log.info('update.downloaded', { version: info.version })
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Red Sky update ready',
+          body: `v${info.version} will install when you quit the app.`,
+        }).show()
+      }
+    })
+    autoUpdater.on('error', (err) => {
+      log.error('update.error', { err: (err as Error).message })
+    })
+    // Check 10s after launch to avoid slowing down startup
+    setTimeout(() => void autoUpdater.checkForUpdates(), 10_000)
+  }
+
+  // Check for the OpenCode CLI immediately — don't wait 45 s for the timeout to
+  // tell the user something they can fix right now.
+  const cliCheck = checkOpenCode()
+  if (!cliCheck.found) {
+    log.warn('opencode.cli.missing', { PATH: process.env.PATH?.slice(0, 200) })
+    broadcast({ source: 'status', state: 'offline', detail: 'opencode-missing' })
+    // Don't attempt to start the server — it will always fail.
+    return
+  }
 
   try {
     const handle = await startServer()

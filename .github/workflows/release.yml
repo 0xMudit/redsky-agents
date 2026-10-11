@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# Unsigned beta builds: skip code-signing discovery so macOS/Windows jobs don't
+# stall hunting for certificates that don't exist yet.
+env:
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  release:
+    name: Package ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+            cmd: npm run dist:win
+            files: |
+              release/*.exe
+              release/*.exe.blockmap
+              release/latest.yml
+          - os: macos-latest
+            name: macOS
+            cmd: npm run dist:mac
+            files: |
+              release/*.dmg
+              release/*.dmg.blockmap
+              release/*.zip
+              release/*.zip.blockmap
+              release/latest-mac.yml
+          - os: ubuntu-latest
+            name: Linux
+            cmd: npm run dist:linux
+            files: |
+              release/*.AppImage
+              release/*.AppImage.blockmap
+              release/*.deb
+              release/latest-linux.yml
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # sharp has native binaries — approve its install script on CI
+      - name: Approve install scripts
+        run: npm approve-scripts sharp
+
+      - name: Generate icons
+        run: npm run build:icons
+
+      - name: Package installer
+        run: ${{ matrix.cmd }}
+
+      - name: Upload artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          draft: true
+          prerelease: ${{ contains(github.ref, '-beta') || contains(github.ref, '-alpha') || contains(github.ref, '-rc') }}
+          generate_release_notes: true
+          files: ${{ matrix.files }}
+          fail_on_unmatched_files: false

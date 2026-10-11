@@ -23,6 +23,7 @@ export type {
   Routine,
   RunDiff,
   SearchHit,
+  SetupCheck,
 } from '../../shared/types'
 
 declare global {

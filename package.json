@@ -1,6 +1,6 @@
 {
   "name": "red-sky",
-  "version": "0.2.0",
+  "version": "0.3.0-beta",
   "description": "Red Sky — Grok Bot–style local AI teammates on your desktop. Runs the OpenCode CLI on your machine; not Ollama.",
   "license": "MIT",
   "author": "Muditya Raghav (https://github.com/0xMudit)",
@@ -31,11 +31,17 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
+    "build:icons": "node scripts/build-icons.mjs",
     "build:test": "node scripts/build-tests.mjs",
-    "test": "npm run build:test && node --test build-tests/suite.test.cjs"
+    "test": "npm run build:test && node --test build-tests/suite.test.cjs",
+    "dist": "npm run build:icons && npm run build && electron-builder",
+    "dist:win": "npm run build:icons && npm run build && electron-builder --win --x64",
+    "dist:mac": "npm run build:icons && npm run build && electron-builder --mac --x64 --arm64",
+    "dist:linux": "npm run build:icons && npm run build && electron-builder --linux --x64"
   },
   "dependencies": {
     "dompurify": "^3.2.4",
+    "electron-updater": "^6.3.9",
     "marked": "^15.0.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
@@ -47,9 +53,14 @@
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",
     "electron": "^37.2.0",
+    "electron-builder": "^26.0.12",
     "esbuild": "^0.25.0",
+    "sharp": "^0.33.5",
     "tailwindcss": "^4.1.4",
     "typescript": "^5.7.3",
     "vite": "^6.3.5"
+  },
+  "allowScripts": {
+    "sharp@0.33.5": true
   }
 }

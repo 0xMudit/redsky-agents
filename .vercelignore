@@ -1,0 +1,17 @@
+# Keep the upload tiny: only web/, renderer/, shared/ are needed to build.
+node_modules
+**/node_modules
+/release
+/dist
+/build
+/build-tests
+/out
+**/.next
+.vercel
+/.git
+/.github
+/docs
+/test
+/scripts
+/electron
+*.log

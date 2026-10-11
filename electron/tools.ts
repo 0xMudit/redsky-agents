@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { workspaceDir, logsDir } from './paths'
@@ -84,36 +84,69 @@ export function runShell(command: string, opts?: { timeoutMs?: number }): Promis
       return
     }
 
-    const shell = process.platform === 'win32'
+    const win = process.platform === 'win32'
+    const shell = win
       ? { file: 'cmd.exe', args: ['/d', '/s', '/c', command] }
       : { file: '/bin/sh', args: ['-c', command] }
 
     let stdout = ''
     let stderr = ''
     let timedOut = false
+    let settled = false
 
     const proc = spawn(shell.file, shell.args, {
       cwd: workspaceDir(),
       windowsHide: true,
       env: { ...process.env },
+      // On Windows libuv re-quotes each argument, which mangles embedded quotes
+      // (e.g. `node -e "..."`). Hand the command to cmd.exe untouched instead.
+      windowsVerbatimArguments: win,
     })
+
+    const settle = (result: ToolResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(result)
+    }
+
+    const killTree = (): void => {
+      if (win && proc.pid) {
+        try {
+          execFileSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' })
+          return
+        } catch {
+          /* fall through to a plain kill */
+        }
+      }
+      try {
+        proc.kill()
+      } catch {
+        /* already gone */
+      }
+    }
+
     const timer = setTimeout(() => {
       timedOut = true
-      proc.kill()
+      killTree()
+      // Resolve on the timer rather than waiting for 'close': a grandchild can
+      // inherit the stdio pipes and keep them open, so 'close' may never fire.
+      const out = [stdout.trim(), `(timed out after ${timeoutMs}ms)`, stderr.trim()].filter(Boolean).join('\n')
+      void logCall({ ts: Date.now(), tool: 'run_shell', input: command, output: out, error: `timed out after ${timeoutMs}ms` })
+      settle({ ok: false, output: out, code: -1 })
     }, timeoutMs)
 
     proc.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')))
     proc.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')))
     proc.on('error', (err) => {
-      clearTimeout(timer)
       void logCall({ ts: Date.now(), tool: 'run_shell', input: command, output: stdout, error: err.message })
-      resolve({ ok: false, error: err.message })
+      settle({ ok: false, error: err.message })
     })
     proc.on('close', (code) => {
-      clearTimeout(timer)
-      const out = [stdout.trim(), timedOut ? `(timed out after ${timeoutMs}ms)` : '', stderr.trim()].filter(Boolean).join('\n')
+      if (timedOut) return
+      const out = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n')
       void logCall({ ts: Date.now(), tool: 'run_shell', input: command, output: out, error: code !== 0 ? `exit ${code}` : undefined })
-      resolve({ ok: code === 0 && !timedOut, output: out || '(no output)', code: code ?? -1 })
+      settle({ ok: code === 0, output: out || '(no output)', code: code ?? -1 })
     })
   })
 }

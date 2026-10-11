@@ -171,6 +171,19 @@ export interface InitPayload {
   runtime: 'opencode'
 }
 
+/** First-run prerequisites the renderer renders as ✓/✗. */
+export interface SetupCheck {
+  appVersion: string
+  platform: string
+  opencode: { found: boolean; path?: string }
+  models: number
+  status: BootState
+  bots: number
+  routines: number
+  memories: number
+  logTailRedacted: string
+}
+
 export type EventEnvelope =
   | { source: 'status'; state: BootState; detail?: string }
   | { source: 'bot'; bot: Bot }
@@ -237,6 +250,8 @@ export interface RedSkyApi {
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   openWorkspace: () => Promise<{ ok: boolean }>
   openLogs: () => Promise<{ ok: boolean }>
+  setupCheck: () => Promise<SetupCheck>
+  openFeedback: () => Promise<{ ok: boolean }>
   windowMinimize: () => void
   windowMaximize: () => void
   windowClose: () => void

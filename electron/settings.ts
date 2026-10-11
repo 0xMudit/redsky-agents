@@ -25,7 +25,7 @@ export function createSettingsStore(): SettingsStore {
       privacyMode: raw.privacyMode !== false,
       autoReview: raw.autoReview === 'always' || raw.autoReview === 'off' ? raw.autoReview : 'sensitive',
       allowBotHandoff: raw.allowBotHandoff !== false,
-      maxParallelBots: Math.min(32, Math.max(1, Number(raw.maxParallelBots) || 8)),
+      maxParallelBots: Math.min(32, Math.max(1, Number.isFinite(Number(raw.maxParallelBots)) ? Number(raw.maxParallelBots) : 8)),
       defaultModel: raw.defaultModel,
       speakResults: raw.speakResults === true,
       lastDigestAt: typeof raw.lastDigestAt === 'number' ? raw.lastDigestAt : undefined,

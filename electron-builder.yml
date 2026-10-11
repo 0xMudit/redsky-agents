@@ -1,0 +1,75 @@
+appId: com.redsky.app
+productName: Red Sky
+copyright: Copyright © 2026 Muditya Raghav
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**
+  - package.json
+  - "!**/*.map"
+
+asar: true
+
+npmRebuild: false
+
+# Publish to GitHub Releases so electron-updater can find new versions.
+# The GH_TOKEN env var is set automatically in GitHub Actions (GITHUB_TOKEN).
+publish:
+  provider: github
+  owner: 0xMudit
+  repo: redsky-agents
+  releaseType: release
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  shortcutName: Red Sky
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  # Unsigned beta builds: GateKeeper will warn on first launch.
+  # Users right-click → Open to bypass on first run.
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+dmg:
+  sign: false
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  icon: build/icon.png
+  category: Utility
+  maintainer: Muditya Raghav <contact@muditya.dev>
+  description: Grok Bot–style local AI teammates that run entirely on your machine.

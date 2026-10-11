@@ -1,0 +1,9 @@
+@import "../vendor/renderer/src/style.css";
+
+/* The vendored UI lives in ../vendor/renderer/src; scan it for class names. */
+@source "../vendor/renderer/src";
+
+html,
+body {
+  height: 100%;
+}

@@ -1,0 +1,30 @@
+{
+  "name": "red-sky-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Red Sky web frontend — the desktop UI running in the browser against the built-in demo adapter.",
+  "scripts": {
+    "sync": "node scripts/sync-vendor.mjs",
+    "predev": "node scripts/sync-vendor.mjs",
+    "dev": "next dev",
+    "prebuild": "node scripts/sync-vendor.mjs",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.4",
+    "marked": "^15.0.7",
+    "next": "^16.4.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.4",
+    "@types/node": "^22.13.1",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "tailwindcss": "^4.1.4",
+    "typescript": "^5.7.3"
+  }
+}

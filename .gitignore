@@ -1,10 +1,18 @@
 node_modules/
 dist/
-build/
 build-tests/
 out/
+release/
 *.log
 .DS_Store
 Thumbs.db
 .env
 .env.local
+
+# Track the generated icons in build/ so `npm start` always has them.
+# The build/ directory itself is not ignored — only non-icon files within it.
+# Run `npm run build:icons` to regenerate from docs/assets/logo.png.
+
+.vercel
+.env*
+*.tsbuildinfo

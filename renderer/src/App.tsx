@@ -1,33 +1,45 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { stripThinking } from './format'
-import type { AppNotice, Bot, EventEnvelope, FileNode, JobTemplate, MemoryRow, ModelOption, Routine, SearchHit } from './types'
+import type { AppNotice, Bot, Connector, EventEnvelope, FileNode, JobTemplate, MemoryRow, ModelOption, Room, Routine, SearchHit, SetupCheck } from './types'
 import {
+  ActivityIcon,
+  ActivityPanel,
+  ActivitySummary,
+  ApprovalCard,
   BellIcon,
   BlobAvatar,
   BotRow,
-  ComputerIcon,
-  ComputerPanel,
+  ConnectorsPanel,
+  ComputerEventCard,
   EmptyState,
   GearIcon,
   IconBtn,
+  Logo,
   MemoryIcon,
   MemoryPanel,
   MessageBlock,
+  NavItem,
+  PanelHeader,
+  PlugIcon,
   PlusIcon,
+  RoomsIcon,
+  RoomsPanel,
   RoutineIcon,
   RoutinePanel,
   RunningDots,
+  RunResultCard,
   SearchIcon,
   SendIcon,
   SettingsPanel,
-  StreakPill,
+  StatusDot,
+  StopIcon,
   TrafficLights,
 } from './ui'
 import type { AppSettings } from './types'
 
 type Boot = 'starting' | 'online' | 'offline'
-type Panel = 'none' | 'computer' | 'memory' | 'routines' | 'settings'
+type Panel = 'none' | 'activity' | 'notices' | 'rooms' | 'memory' | 'routines' | 'connectors' | 'settings'
 
 const STREAK_KEY = 'redsky.streak'
 const QUICK = [
@@ -35,6 +47,31 @@ const QUICK = [
   { label: 'Shorter', text: 'Give me a tighter version of that result.' },
   { label: 'Another angle', text: 'Same goal, different angle. Surprise me.' },
 ]
+
+function Check({ ok }: { ok: boolean }): React.JSX.Element {
+  return (
+    <span className="inline-block w-[14px] text-center" style={{ color: ok ? 'var(--text-success)' : 'var(--text-danger)' }}>
+      {ok ? '✓' : '✗'}
+    </span>
+  )
+}
+
+function Step({ n, done, children }: { n: number; done: boolean; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <div className="flex gap-3">
+      <span
+        className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold mt-0.5"
+        style={{
+          background: done ? 'var(--text-success)' : 'var(--fill-secondary)',
+          color: done ? '#fff' : 'var(--text-secondary)',
+        }}
+      >
+        {done ? '✓' : n}
+      </span>
+      <div className="text-[13px]">{children}</div>
+    </div>
+  )
+}
 
 function loadStreak(): number {
   try {
@@ -67,6 +104,7 @@ function bumpStreak(): number {
 export default function App(): React.JSX.Element {
   const [boot, setBoot] = useState<Boot>('starting')
   const [detail, setDetail] = useState('')
+  const [setup, setSetup] = useState<SetupCheck | null>(null)
   const [models, setModels] = useState<ModelOption[]>([])
   const [model, setModel] = useState('')
   const [bots, setBots] = useState<Bot[]>([])
@@ -78,12 +116,13 @@ export default function App(): React.JSX.Element {
   const [panel, setPanel] = useState<Panel>('none')
   const [memories, setMemories] = useState<MemoryRow[]>([])
   const [routines, setRoutines] = useState<Routine[]>([])
+  const [rooms, setRooms] = useState<Room[]>([])
   const [templates, setTemplates] = useState<JobTemplate[]>([])
   const [files, setFiles] = useState<FileNode[]>([])
   const [fileView, setFileView] = useState<{ path: string; content: string } | null>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [connectors, setConnectors] = useState<Connector[]>([])
   const [notices, setNotices] = useState<AppNotice[]>([])
-  const [inboxOpen, setInboxOpen] = useState(false)
   const [unread, setUnread] = useState<Record<string, number>>({})
   const [editor, setEditor] = useState<{ name: string; job: string } | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -93,6 +132,7 @@ export default function App(): React.JSX.Element {
   const threadRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
   const selectedIdRef = useRef<string | null>(null)
+  const lastPanelRef = useRef<Exclude<Panel, 'none'>>('activity')
 
   const upsertBot = useCallback((bot: Bot) => {
     setBots((prev) => {
@@ -117,8 +157,10 @@ export default function App(): React.JSX.Element {
         setBots(p.bots)
         setMemories(p.memories)
         setRoutines(p.routines)
+        setRooms(p.rooms ?? [])
         setTemplates(p.templates)
         setSettings(p.settings)
+        setConnectors(p.connectors ?? [])
         setNotices(p.notices ?? [])
         if (p.bots.length) setSelectedId(p.bots[0].id)
       })
@@ -126,6 +168,10 @@ export default function App(): React.JSX.Element {
         setBoot('offline')
         setDetail((err as Error).message)
       })
+    api
+      .setupCheck()
+      .then(setSetup)
+      .catch(() => setSetup(null))
   }, [])
 
   useEffect(() => {
@@ -154,6 +200,8 @@ export default function App(): React.JSX.Element {
       }
       if (evt.source === 'notice') setNotices((prev) => [evt.notice, ...prev.filter((n) => n.id !== evt.notice.id)].slice(0, 80))
       if (evt.source === 'notices') setNotices(evt.notices)
+      if (evt.source === 'connectors') setConnectors(evt.connectors)
+      if (evt.source === 'rooms') setRooms(evt.rooms)
       if (evt.source === 'settings') setSettings(evt.settings)
     })
     return off
@@ -178,9 +226,11 @@ export default function App(): React.JSX.Element {
   }, [models, model])
 
   useEffect(() => {
-    if (panel === 'computer') void api.files('.').then(setFiles).catch(() => setFiles([]))
+    if (panel === 'activity') void api.files('.').then(setFiles).catch(() => setFiles([]))
     if (panel === 'memory') void api.listMemories(selected?.id).then(setMemories)
     if (panel === 'routines') void api.listRoutines().then(setRoutines)
+    if (panel === 'connectors') void api.listConnectors().then(setConnectors)
+    if (panel === 'rooms') void api.listRooms().then(setRooms)
   }, [panel, selected?.id, selected?.computer.length])
 
   const scrollToEnd = useCallback((smooth = false) => {
@@ -195,7 +245,6 @@ export default function App(): React.JSX.Element {
 
   const openBot = useCallback((id: string) => {
     setSelectedId(id)
-    setInboxOpen(false)
     setUnread((u) => {
       if (!u[id]) return u
       const next = { ...u }
@@ -220,8 +269,6 @@ export default function App(): React.JSX.Element {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
     const matched = q ? bots.filter((b) => `${b.name} ${b.job} ${b.preview}`.toLowerCase().includes(q)) : bots
-    // Pinned agents first, archived ones last; Array.sort is stable, so the
-    // incoming most-recent-first order survives inside each group.
     const rank = (b: Bot) => (b.archived ? 2 : 0) + (b.pinned ? 0 : 1)
     return [...matched].sort((a, b) => rank(a) - rank(b))
   }, [bots, search])
@@ -248,7 +295,7 @@ export default function App(): React.JSX.Element {
       .fileContent(rel)
       .then((content) => {
         setFileView({ path: rel, content })
-        setPanel('computer')
+        setPanel('activity')
       })
       .catch(() => undefined)
   }, [])
@@ -306,41 +353,95 @@ export default function App(): React.JSX.Element {
 
   const statusLabel = boot === 'online' ? 'Live' : boot === 'starting' ? 'Starting…' : 'Offline'
   const lastWasResult = selected?.status === 'idle' && visibleThread.at(-1)?.role === 'assistant'
+  const hasResult = Boolean(
+    selected && ((selected.runDiff && (selected.runDiff.added.length || selected.runDiff.changed.length || selected.runDiff.removed.length)) || selected.artifacts?.length),
+  )
+  const openPanel = useCallback((p: Panel) => setPanel((cur) => (cur === p ? 'none' : p)), [])
+
+  const panelOpen = panel !== 'none'
+  useEffect(() => {
+    if (panel !== 'none') lastPanelRef.current = panel
+  }, [panel])
+  const activePanel: Exclude<Panel, 'none'> = panelOpen ? (panel as Exclude<Panel, 'none'>) : lastPanelRef.current
+
+  // ── First-run blocking screen ──────────────────────────────────────────────
+  const cliMissing = boot === 'offline' && detail === 'opencode-missing'
+  if (cliMissing) {
+    return (
+      <div className="app-shell flex h-full flex-col items-center justify-center gap-6 px-10" style={{ color: 'var(--text-primary)' }}>
+        <div className="window-drag absolute top-0 left-0 right-0 h-11 flex items-center px-4" style={{ background: 'var(--sidebar-tint)' }}>
+          <TrafficLights />
+        </div>
+        <div className="flex flex-col items-center gap-4 max-w-sm text-center">
+          <Logo size={44} />
+          <h1 className="text-[22px] font-semibold tracking-tight">Welcome to Red Sky</h1>
+          <p className="text-[14px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+            Red Sky needs the <strong>OpenCode CLI</strong> to run agents on your machine. It was not found on your{' '}
+            <code className="rounded px-1" style={{ background: 'var(--bg-tertiary)', fontSize: '12px' }}>
+              PATH
+            </code>
+            .
+          </p>
+        </div>
+
+        <div className="w-full max-w-sm rounded-2xl p-5 space-y-4" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
+          <Step n={1} done={false}>
+            Install the OpenCode CLI
+            <a href="https://opencode.ai" target="_blank" rel="noreferrer" className="ml-2 underline font-medium" style={{ color: 'var(--text-accent)' }}>
+              opencode.ai →
+            </a>
+            <p className="mt-1 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+              Run <code className="rounded px-1" style={{ background: 'var(--bg-tertiary)' }}>npm i -g opencode@latest</code> or download from the site. This is not Ollama.
+            </p>
+          </Step>
+          <Step n={2} done={false}>
+            Configure a model provider
+            <p className="mt-1 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+              Run <code className="rounded px-1" style={{ background: 'var(--bg-tertiary)' }}>opencode</code> in a terminal and pick Anthropic, OpenAI, or another provider.
+            </p>
+          </Step>
+          <Step n={3} done={false}>
+            Relaunch Red Sky
+            <p className="mt-1 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+              Once <code className="rounded px-1" style={{ background: 'var(--bg-tertiary)' }}>opencode --version</code> works in a terminal, restart this app.
+            </p>
+          </Step>
+        </div>
+
+        <p className="text-[11px] max-w-xs text-center" style={{ color: 'var(--text-tertiary)' }}>
+          Stuck? Set <code className="rounded px-1" style={{ background: 'var(--bg-tertiary)' }}>OPENCODE_BIN</code> to the full path of your <code className="rounded px-1" style={{ background: 'var(--bg-tertiary)' }}>opencode</code> binary and relaunch.
+        </p>
+      </div>
+    )
+  }
 
   return (
-    <div className="flex h-full text-[var(--text-primary)]" style={{ background: 'var(--substrate)' }}>
-      <aside className="w-[280px] shrink-0 flex flex-col relative" style={{ background: 'var(--sidebar-tint)' }}>
+    <div className="app-shell flex h-full text-[var(--text-primary)]">
+      {/* ── Sidebar ────────────────────────────────────────────── */}
+      <aside className="w-[276px] shrink-0 flex flex-col relative" style={{ background: 'var(--sidebar-tint)' }}>
         <div className="absolute top-0 right-0 bottom-0 w-px" style={{ background: 'var(--border)' }} />
+
         <div className="window-drag h-11 px-4 flex items-center shrink-0">
           <TrafficLights />
+          <span className="window-no-drag ml-3">
+            <Logo />
+          </span>
+        </div>
+
+        <div className="window-no-drag px-3 mb-3">
           <button
             onClick={() => void newAgent()}
             disabled={boot !== 'online'}
-            className="window-no-drag ml-auto w-6 h-6 rounded-[6px] flex items-center justify-center text-[var(--sidebar-muted)] hover:bg-[var(--sidebar-hover)] disabled:opacity-30"
-            title="New agent"
+            className="w-full h-9 rounded-[10px] flex items-center justify-center gap-2 text-[13px] font-medium disabled:opacity-40 btn-sheen pressable"
+            style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}
           >
-            <PlusIcon />
+            <PlusIcon size={15} />
+            New chat
           </button>
         </div>
-        <div className="window-no-drag px-4 mb-2 flex items-center gap-2">
-          <StreakPill days={streak} />
-          {unreadCount > 0 && (
-            <span className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
-              {unreadCount} waiting
-            </span>
-          )}
-        </div>
-        {bots.length > 0 && (
-          <div className="window-no-drag flex gap-2 overflow-x-auto px-3 pb-2">
-            {bots.slice(0, 12).map((b) => (
-              <button key={b.id} onClick={() => openBot(b.id)} className={unread[b.id] || b.status === 'waiting' ? 'story-ring shrink-0' : 'shrink-0'} title={b.name}>
-                <BlobAvatar hue={b.hue} size={36} />
-              </button>
-            ))}
-          </div>
-        )}
+
         <label
-          className="window-no-drag mx-4 mb-2 h-8 rounded-[10px] flex items-center gap-2 px-2.5"
+          className="window-no-drag mx-3 mb-2 h-9 rounded-[10px] flex items-center gap-2 px-2.5"
           style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--sidebar-faint)' }}
         >
           <SearchIcon />
@@ -351,7 +452,18 @@ export default function App(): React.JSX.Element {
             className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-[var(--sidebar-text)] placeholder:text-[var(--sidebar-faint)] outline-none"
           />
         </label>
-        <nav className="flex-1 overflow-y-auto px-2.5 pb-2">
+
+        {bots.length > 0 && (
+          <div className="window-no-drag flex gap-2 overflow-x-auto px-3 pb-2 pt-1">
+            {bots.slice(0, 12).map((b) => (
+              <button key={b.id} onClick={() => openBot(b.id)} className={unread[b.id] || b.status === 'waiting' ? 'story-ring shrink-0 rounded-full' : 'shrink-0 rounded-full'} title={b.name}>
+                <BlobAvatar hue={b.hue} size={34} />
+              </button>
+            ))}
+          </div>
+        )}
+
+        <nav className="flex-1 overflow-y-auto px-2 pb-2">
           {visible.map((b) => (
             <BotRow key={b.id} bot={b} active={b.id === selected?.id} unread={Boolean(unread[b.id])} onSelect={() => openBot(b.id)} />
           ))}
@@ -366,12 +478,7 @@ export default function App(): React.JSX.Element {
                 In workspace
               </p>
               {hits.map((h) => (
-                <button
-                  key={h.id}
-                  onClick={() => openHit(h)}
-                  title={h.path}
-                  className="w-full text-left rounded-[8px] px-2 py-1.5 mb-0.5 hover:bg-[var(--sidebar-hover)]"
-                >
+                <button key={h.id} onClick={() => openHit(h)} title={h.path} className="w-full text-left rounded-[8px] px-2 py-1.5 mb-0.5 hover:bg-[var(--sidebar-hover)]">
                   <span className="block text-[12px] truncate" style={{ color: 'var(--sidebar-text)' }}>
                     {h.title}
                   </span>
@@ -383,45 +490,57 @@ export default function App(): React.JSX.Element {
             </div>
           )}
         </nav>
-        <div className="px-3.5 pb-3.5 pt-2 flex items-center gap-2 shrink-0">
-          <span
-            className="w-[7px] h-[7px] rounded-full"
-            style={{ background: boot === 'online' ? 'var(--text-success)' : boot === 'starting' ? 'var(--text-warning)' : 'var(--text-danger)' }}
-          />
+
+        <div className="px-2 py-2 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
+          <NavItem active={panel === 'rooms'} onClick={() => openPanel('rooms')} icon={<RoomsIcon />} label="Rooms" />
+          <NavItem active={panel === 'routines'} onClick={() => openPanel('routines')} icon={<RoutineIcon />} label="Schedules" />
+          <NavItem active={panel === 'memory'} onClick={() => openPanel('memory')} icon={<MemoryIcon />} label="Memory" />
+          <NavItem active={panel === 'connectors'} onClick={() => openPanel('connectors')} icon={<PlugIcon />} label="Connectors" />
+          <NavItem active={panel === 'settings'} onClick={() => openPanel('settings')} icon={<GearIcon />} label="Settings" />
+        </div>
+
+        <div className="px-3.5 pb-3.5 pt-2 flex items-center gap-2 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
+          <StatusDot status={boot} />
           <span className="text-[12px] truncate" style={{ color: 'var(--sidebar-muted)' }}>
             {statusLabel}
           </span>
+          {streak > 1 && (
+            <span className="ml-auto text-[11px] shrink-0" style={{ color: 'var(--text-warning)' }}>
+              {streak}d streak
+            </span>
+          )}
         </div>
       </aside>
 
+      {/* ── Center ─────────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col min-w-0" style={{ background: 'var(--chat-fill)' }}>
         <header className="window-drag h-11 flex items-center gap-2 px-3 shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
           {selected ? (
-            <button className="window-no-drag flex items-center gap-2 min-w-0" onClick={() => setEditor({ name: selected.name, job: selected.job })}>
-              <BlobAvatar hue={selected.hue} size={22} />
-              <span className="text-[13px] font-medium truncate">{selected.name}</span>
-              {selected.status === 'running' && (
-                <span className="text-[11px]" style={{ color: 'var(--text-warning)' }}>
-                  Working
-                </span>
-              )}
-              {selected.status === 'waiting' && (
-                <span className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
-                  Needs you
-                </span>
-              )}
+            <button className="window-no-drag flex items-center gap-2.5 min-w-0 rounded-lg px-1.5 py-1 hover:bg-[var(--bg-hover)]" onClick={() => setEditor({ name: selected.name, job: selected.job })}>
+              <BlobAvatar hue={selected.hue} size={24} />
+              <span className="text-[13.5px] font-semibold truncate">{selected.name}</span>
+              <StatusDot status={selected.status} />
+              <span className="text-[11.5px] shrink-0" style={{ color: 'var(--text-tertiary)' }}>
+                {selected.status === 'running'
+                  ? selected.activity || 'Working…'
+                  : selected.status === 'waiting'
+                    ? 'Needs you'
+                    : selected.status === 'error'
+                      ? 'Error'
+                      : 'Ready'}
+              </span>
             </button>
           ) : (
             <span className="text-[13px]" style={{ color: 'var(--text-tertiary)' }}>
-              Meet your first Bot
+              Meet your first agent
             </span>
           )}
-          <div className="window-no-drag ml-auto flex items-center gap-1">
+          <div className="window-no-drag ml-auto flex items-center gap-1.5">
             <select
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              className="bg-transparent text-[11px] px-2 py-1 max-w-48 rounded-[6px] outline-none"
-              style={{ color: 'var(--text-secondary)' }}
+              className="bg-transparent text-[11.5px] px-2 py-1.5 max-w-48 rounded-lg outline-none hover:bg-[var(--bg-hover)]"
+              style={{ color: 'var(--text-secondary)', border: '0.5px solid var(--border)' }}
             >
               {models.map((m) => (
                 <option key={m.id || m.label} value={m.id}>
@@ -429,32 +548,27 @@ export default function App(): React.JSX.Element {
                 </option>
               ))}
             </select>
-            <IconBtn
-              active={inboxOpen}
-              onClick={() => setInboxOpen((v) => !v)}
-              title="Notifications"
-            >
+            <IconBtn active={panel === 'activity'} onClick={() => openPanel('activity')} title="Activity panel">
+              <ActivityIcon />
+            </IconBtn>
+            <IconBtn active={panel === 'notices'} onClick={() => openPanel('notices')} title="Notifications">
               <span className="relative">
                 <BellIcon />
                 {unreadNotices > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full text-[9px] flex items-center justify-center" style={{ background: '#ff5f57', color: '#fff' }}>
+                  <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-0.5 rounded-full text-[9px] flex items-center justify-center" style={{ background: 'var(--accent)', color: 'var(--accent-ink)', fontWeight: 700 }}>
                     {unreadNotices > 9 ? '9+' : unreadNotices}
                   </span>
                 )}
               </span>
             </IconBtn>
-            <IconBtn active={panel === 'computer'} onClick={() => setPanel((p) => (p === 'computer' ? 'none' : 'computer'))} title="Open computer">
-              <ComputerIcon />
-            </IconBtn>
-            <IconBtn active={panel === 'memory'} onClick={() => setPanel((p) => (p === 'memory' ? 'none' : 'memory'))} title="Memory">
-              <MemoryIcon />
-            </IconBtn>
-            <IconBtn active={panel === 'routines'} onClick={() => setPanel((p) => (p === 'routines' ? 'none' : 'routines'))} title="Routines">
-              <RoutineIcon />
-            </IconBtn>
-            <IconBtn active={panel === 'settings'} onClick={() => setPanel((p) => (p === 'settings' ? 'none' : 'settings'))} title="Settings">
-              <GearIcon />
-            </IconBtn>
+            <button
+              onClick={() => void api.openFeedback()}
+              className="window-no-drag text-[11px] px-2.5 py-1.5 rounded-lg hover:bg-[var(--bg-hover)]"
+              style={{ color: 'var(--text-accent)', border: '0.5px solid color-mix(in srgb, var(--text-accent) 40%, transparent)' }}
+              title="Report a beta bug or request a feature — opens a prefilled GitHub issue"
+            >
+              Beta
+            </button>
           </div>
         </header>
 
@@ -462,7 +576,7 @@ export default function App(): React.JSX.Element {
           <div className="flex-1 flex flex-col min-w-0 relative">
             <div
               ref={threadRef}
-              className="flex-1 overflow-y-auto px-8 py-5 space-y-4"
+              className="flex-1 overflow-y-auto px-6 py-6"
               onScroll={(e) => {
                 const el = e.currentTarget
                 stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 96
@@ -470,7 +584,7 @@ export default function App(): React.JSX.Element {
               }}
             >
               {selected ? (
-                <>
+                <div className="mx-auto w-full max-w-3xl space-y-4">
                   {selected.job && !visibleThread.length && (
                     <p className="text-[13px] max-w-lg" style={{ color: 'var(--text-tertiary)' }}>
                       {selected.job}
@@ -484,6 +598,7 @@ export default function App(): React.JSX.Element {
                       kind={m.kind}
                       hue={selected.hue}
                       name={selected.name}
+                      streaming={selected.status === 'running' && i === visibleThread.length - 1 && m.role === 'assistant'}
                       editing={editingId === m.id}
                       draft={editingId === m.id ? draft : undefined}
                       onDraft={setDraft}
@@ -524,59 +639,46 @@ export default function App(): React.JSX.Element {
                       }
                     />
                   ))}
-                  {selected.status === 'running' && <RunningDots hue={selected.hue} />}
+
+                  {selected.status === 'running' && (
+                    <>
+                      {selected.computer.slice(-5).map((c) => (
+                        <ComputerEventCard key={c.id} ev={c} />
+                      ))}
+                      <RunningDots hue={selected.hue} label={selected.activity} />
+                    </>
+                  )}
+
+                  {lastWasResult && hasResult && (
+                    <RunResultCard bot={selected} onOpenFile={(p) => void api.fileContent(p).then((content) => { setFileView({ path: p, content }); setPanel('activity') })} onOpenActivity={() => setPanel('activity')} />
+                  )}
+                  {lastWasResult && !hasResult && <ActivitySummary bot={selected} onOpen={() => setPanel('activity')} />}
+
                   {lastWasResult && (
-                    <div className="flex flex-wrap gap-1.5 pl-10">
-                      {QUICK.map((q) => (
+                    <div className="flex flex-wrap gap-1.5">
+                      {QUICK.map((q, i) => (
                         <button
                           key={q.label}
                           onClick={() => void send(q.text)}
-                          className="rounded-full px-3 py-1 text-[12px] hover:bg-[var(--bg-hover)]"
-                          style={{ border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+                          className="rounded-full px-3 py-1.5 text-[12px] hover:bg-[var(--bg-hover)] pressable motion-rise"
+                          style={{ border: '0.5px solid var(--border)', color: 'var(--text-secondary)', animationDelay: `${i * 45}ms` }}
                         >
                           {q.label}
                         </button>
                       ))}
                     </div>
                   )}
+
                   {selected.pendingPermission && (
-                    <div className="rounded-2xl p-3 max-w-lg" style={{ background: 'var(--bubble-agent)' }}>
-                      <p className="text-[14px] font-semibold">{selected.pendingPermission.title}</p>
-                      <p className="text-[13px] mt-1 whitespace-pre-wrap" style={{ color: 'var(--text-tertiary)' }}>
-                        {selected.pendingPermission.detail}
-                      </p>
-                      <div className="flex gap-2 mt-3">
-                        <button
-                          onClick={() => void api.permission({ botId: selected.id, permissionId: selected.pendingPermission!.id, response: 'once' })}
-                          className="text-[13px] font-medium rounded-full px-3 py-1.5"
-                          style={{ background: 'var(--fill-emphasis)', color: 'var(--bubble-user-ink)' }}
-                        >
-                          Allow once
-                        </button>
-                        <button
-                          onClick={() => void api.permission({ botId: selected.id, permissionId: selected.pendingPermission!.id, response: 'always' })}
-                          className="text-[13px] rounded-full px-3 py-1.5"
-                          style={{ background: 'var(--fill-secondary)' }}
-                        >
-                          Always
-                        </button>
-                        <button
-                          onClick={() => void api.permission({ botId: selected.id, permissionId: selected.pendingPermission!.id, response: 'reject' })}
-                          className="text-[13px] px-3 py-1.5"
-                          style={{ color: 'var(--text-danger)' }}
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    </div>
+                    <ApprovalCard bot={selected} onRespond={(response) => void api.permission({ botId: selected.id, permissionId: selected.pendingPermission!.id, response })} />
                   )}
                   {selected.error && (
-                    <div className="rounded-xl px-3 py-2 text-[13px]" style={{ background: '#2a1416', color: 'var(--text-danger)' }}>
+                    <div className="rounded-xl px-3 py-2 text-[13px]" style={{ background: 'color-mix(in srgb, var(--text-danger) 12%, transparent)', color: 'var(--text-danger)', border: '0.5px solid color-mix(in srgb, var(--text-danger) 30%, transparent)' }}>
                       {selected.error}
                     </div>
                   )}
                   <div className="h-2" />
-                </>
+                </div>
               ) : (
                 <EmptyState templates={templates} onPick={(t) => void newAgent(t)} onNew={() => void newAgent()} />
               )}
@@ -589,7 +691,7 @@ export default function App(): React.JSX.Element {
                   scrollToEnd(true)
                   setShowJump(false)
                 }}
-                className="absolute bottom-24 right-8 rounded-full px-3 py-1.5 text-[12px]"
+                className="absolute bottom-28 right-8 rounded-full px-3 py-1.5 text-[12px]"
                 style={{ background: 'var(--raised)', border: '0.5px solid var(--border)' }}
               >
                 Jump to latest
@@ -599,121 +701,134 @@ export default function App(): React.JSX.Element {
             {nextHit && (
               <button
                 onClick={() => openBot(nextHit.id)}
-                className="absolute bottom-24 left-8 rounded-full px-3 py-1.5 text-[12px] flex items-center gap-2"
-                style={{ background: 'var(--fill-emphasis)', color: 'var(--bubble-user-ink)' }}
+                className="absolute bottom-28 left-8 rounded-full px-3 py-1.5 text-[12px] flex items-center gap-2"
+                style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}
               >
                 Next hit · {nextHit.name}
               </button>
             )}
 
-            {selected?.status === 'running' && (
-              <div className="px-8 pb-1 flex justify-end">
-                <button
-                  onClick={() => void api.abortBot(selected.id)}
-                  className="text-[12px] rounded-full px-3 py-1"
-                  style={{ color: 'var(--text-warning)', border: '0.5px solid color-mix(in srgb, var(--text-warning) 28%, transparent)' }}
-                >
-                  Stop
-                </button>
+            <footer className="px-6 pb-5 pt-2">
+              <div className="mx-auto w-full max-w-3xl">
+                {(boot !== 'online' || (setup && !setup.opencode.found)) && (
+                  <div
+                    className="mb-2 rounded-xl px-3 py-2.5"
+                    style={{ background: 'color-mix(in srgb, var(--bg-card) 55%, transparent)', border: '0.5px solid color-mix(in srgb, var(--text-warning) 30%, transparent)' }}
+                  >
+                    <p className="text-[12px] font-medium mb-1.5" style={{ color: 'var(--text-warning)' }}>
+                      First-run setup
+                    </p>
+                    <div className="space-y-1 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                      <p>
+                        <Check ok={setup !== null && setup.opencode.found} /> OpenCode CLI on PATH
+                        {setup && !setup.opencode.found && (
+                          <>
+                            {' '}
+                            —{' '}
+                            <a className="underline" style={{ color: 'var(--text-accent)' }} href="https://opencode.ai" target="_blank" rel="noreferrer">
+                              install it
+                            </a>
+                          </>
+                        )}
+                      </p>
+                      <p>
+                        <Check ok={(setup?.models ?? 0) > 0} /> Model provider configured
+                        {setup && setup.models === 0 && (
+                          <>
+                            {' '}
+                            —{' '}
+                            <a className="underline" style={{ color: 'var(--text-accent)' }} href="https://opencode.ai/docs" target="_blank" rel="noreferrer">
+                              run once and pick a provider
+                            </a>
+                          </>
+                        )}
+                      </p>
+                      <p>
+                        <Check ok={boot === 'online'} /> OpenCode server {boot === 'online' ? 'connected' : boot === 'starting' ? 'starting…' : 'offline'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <div className={`flex items-end gap-2 rounded-2xl px-2.5 py-2${selected?.status === 'running' ? ' composer-running' : ''}`} style={{ background: 'var(--raised)', border: '0.5px solid var(--border)' }}>
+                  <button
+                    className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center hover:bg-[var(--bg-hover)]"
+                    style={{ background: 'var(--fill-secondary)', color: 'var(--text-secondary)' }}
+                    title="New agent"
+                    onClick={() => void newAgent()}
+                  >
+                    <PlusIcon size={15} />
+                  </button>
+                  <textarea
+                    id="composer"
+                    rows={1}
+                    value={composer}
+                    onChange={(e) => {
+                      setComposer(e.target.value)
+                      e.currentTarget.style.height = 'auto'
+                      e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 140)}px`
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        void send()
+                      }
+                    }}
+                    placeholder={selected?.status === 'running' ? 'Working on it…' : selected ? `Message ${selected.name} — try “remind me to drink water each min”` : 'Drop a task. Get a hit.'}
+                    disabled={selected?.status === 'running'}
+                    className="flex-1 resize-none bg-transparent px-1.5 py-1.5 text-[14px] leading-5 outline-none max-h-[140px]"
+                    style={{ color: 'var(--text-primary)' }}
+                  />
+                  {selected?.status === 'running' ? (
+                    <button
+                      onClick={() => void api.abortBot(selected.id)}
+                      className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center pressable"
+                      style={{ background: 'var(--fill-secondary)', color: 'var(--text-warning)' }}
+                      title="Stop"
+                    >
+                      <StopIcon />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => void send()}
+                      disabled={sending || !composer.trim() || boot !== 'online'}
+                      className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center disabled:opacity-30 pressable"
+                      style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}
+                      title="Send"
+                    >
+                      <SendIcon />
+                    </button>
+                  )}
+                </div>
+                {detail ? (
+                  <p className="mt-2 text-[10px] text-center" style={{ color: 'var(--text-tertiary)' }}>
+                    {detail}
+                  </p>
+                ) : null}
               </div>
-            )}
-
-            <footer className="px-5 pb-4 pt-2">
-              <div className="flex items-center gap-2 rounded-full px-2 py-2" style={{ background: 'var(--raised)', border: '0.5px solid var(--border)' }}>
-                <button
-                  className="w-7 h-7 shrink-0 rounded-full flex items-center justify-center"
-                  style={{ background: 'var(--fill-secondary)', color: 'var(--text-secondary)' }}
-                  title="New agent"
-                  onClick={() => void newAgent()}
-                >
-                  <PlusIcon size={14} />
-                </button>
-                <textarea
-                  id="composer"
-                  rows={1}
-                  value={composer}
-                  onChange={(e) => {
-                    setComposer(e.target.value)
-                    e.currentTarget.style.height = 'auto'
-                    e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 120)}px`
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      void send()
-                    }
-                  }}
-                  placeholder={selected?.status === 'running' ? 'Working on it…' : selected ? `Message ${selected.name} — try “remind me to drink water each min”` : 'Drop a task. Get a hit.'}
-                  disabled={selected?.status === 'running'}
-                  className="flex-1 resize-none bg-transparent px-1 py-1 text-[14px] leading-5 outline-none max-h-[120px]"
-                  style={{ color: 'var(--text-primary)' }}
-                />
-                <button
-                  onClick={() => void send()}
-                  disabled={sending || !composer.trim() || selected?.status === 'running' || boot !== 'online'}
-                  className="w-7 h-7 shrink-0 rounded-full flex items-center justify-center disabled:opacity-30"
-                  style={{ background: 'var(--fill-emphasis)', color: 'var(--bubble-user-ink)' }}
-                  title="Send"
-                >
-                  <SendIcon />
-                </button>
-              </div>
-              {detail ? (
-                <p className="mt-2 text-[10px] text-center" style={{ color: 'var(--text-tertiary)' }}>
-                  {detail}
-                </p>
-              ) : null}
             </footer>
           </div>
 
-          {inboxOpen && (
-            <aside className="w-[320px] shrink-0 flex flex-col" style={{ borderLeft: '0.5px solid var(--border)', background: 'color-mix(in srgb, var(--bg-elevated) 88%, transparent)' }}>
-              <div className="h-11 px-4 flex items-center justify-between" style={{ borderBottom: '0.5px solid var(--border)' }}>
-                <h2 className="text-[13px] font-medium">Hits</h2>
-                <div className="flex gap-2">
-                  <button onClick={() => void api.markAllNoticesRead().then(setNotices)} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
-                    Read all
-                  </button>
-                  <button onClick={() => void api.clearNotices().then(() => setNotices([]))} className="text-[11px]" style={{ color: 'var(--text-danger)' }}>
-                    Clear
-                  </button>
-                </div>
-              </div>
-              <div className="flex-1 overflow-y-auto p-2">
-                {notices.map((n) => (
-                  <button
-                    key={n.id}
-                    onClick={() => {
-                      openBot(n.botId)
-                      void api.markNoticeRead(n.id).then(setNotices)
-                    }}
-                    className="w-full text-left rounded-[12px] px-3 py-2 mb-1"
-                    style={{ background: n.read ? 'transparent' : 'var(--bg-card)' }}
-                  >
-                    <div className="flex justify-between gap-2">
-                      <span className="text-[12px] font-medium">{n.title}</span>
-                      <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                        {new Date(n.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
-                      </span>
-                    </div>
-                    <p className="text-[12px] truncate mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-                      {n.body}
-                    </p>
-                  </button>
-                ))}
-                {!notices.length && (
-                  <p className="px-3 py-8 text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-                    When an agent finishes, it lands here. Check back for the next hit.
-                  </p>
-                )}
-              </div>
-            </aside>
-          )}
-
-          {panel !== 'none' && !inboxOpen && (
-            <aside className="w-[360px] shrink-0 flex flex-col" style={{ borderLeft: '0.5px solid var(--border)', background: 'color-mix(in srgb, var(--bg-elevated) 88%, transparent)' }}>
-              {panel === 'computer' && (
-                <ComputerPanel
+          {/* ── Right panel ──────────────────────────────────────── */}
+          <aside
+            className="shrink-0 overflow-hidden panel-collapse flex flex-col"
+            style={{
+              width: panelOpen ? 368 : 0,
+              borderLeft: panelOpen ? '0.5px solid var(--border)' : '0.5px solid transparent',
+              background: 'var(--panel-fill)',
+            }}
+            aria-hidden={!panelOpen}
+          >
+            <div
+              className="w-[368px] flex-1 flex flex-col min-h-0"
+              style={{
+                opacity: panelOpen ? 1 : 0,
+                transform: panelOpen ? 'none' : 'translateX(18px)',
+                transition: 'opacity var(--dur-2) var(--ease-out), transform var(--dur-2) var(--ease-out)',
+                pointerEvents: panelOpen ? 'auto' : 'none',
+              }}
+            >
+              {activePanel === 'activity' && (
+                <ActivityPanel
                   bot={selected}
                   files={files}
                   fileView={fileView}
@@ -722,20 +837,77 @@ export default function App(): React.JSX.Element {
                     const content = await api.fileContent(p)
                     setFileView({ path: p, content })
                   }}
+                  onCollapse={() => setPanel('none')}
                 />
               )}
-              {panel === 'memory' && <MemoryPanel memories={memories} botId={selected?.id} onChange={setMemories} />}
-              {panel === 'routines' && <RoutinePanel routines={routines} bots={bots} selectedId={selected?.id} onChange={setRoutines} />}
-              {panel === 'settings' && settings && <SettingsPanel settings={settings} onChange={setSettings} />}
-            </aside>
-          )}
+              {activePanel === 'notices' && (
+                <>
+                  <PanelHeader
+                    title="Notifications"
+                    subtitle="When an agent finishes, it lands here."
+                    onClose={() => setPanel('none')}
+                    action={
+                      <div className="flex gap-2">
+                        <button onClick={() => void api.markAllNoticesRead().then(setNotices)} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
+                          Read all
+                        </button>
+                        <button onClick={() => void api.clearNotices().then(() => setNotices([]))} className="text-[11px]" style={{ color: 'var(--text-danger)' }}>
+                          Clear
+                        </button>
+                      </div>
+                    }
+                  />
+                  <div className="flex-1 overflow-y-auto p-2">
+                    {notices.map((n, i) => (
+                      <button
+                        key={n.id}
+                        onClick={() => {
+                          openBot(n.botId)
+                          void api.markNoticeRead(n.id).then(setNotices)
+                        }}
+                        className="w-full text-left rounded-[12px] px-3 py-2 mb-1 motion-rise card-hover"
+                        style={{ background: n.read ? 'transparent' : 'var(--bg-card)', animationDelay: `${i * 30}ms` }}
+                      >
+                        <div className="flex justify-between gap-2">
+                          <span className="text-[12px] font-medium">{n.title}</span>
+                          <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
+                            {new Date(n.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-[12px] truncate mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+                          {n.body}
+                        </p>
+                      </button>
+                    ))}
+                    {!notices.length && (
+                      <p className="px-3 py-8 text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+                        When an agent finishes, it lands here. Check back for the next hit.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+              {activePanel === 'rooms' && <RoomsPanel rooms={rooms} bots={bots} onChange={setRooms} onClose={() => setPanel('none')} />}
+              {activePanel === 'memory' && <MemoryPanel memories={memories} botId={selected?.id} onChange={setMemories} onClose={() => setPanel('none')} />}
+              {activePanel === 'routines' && <RoutinePanel routines={routines} bots={bots} selectedId={selected?.id} onChange={setRoutines} onClose={() => setPanel('none')} />}
+              {activePanel === 'connectors' && <ConnectorsPanel connectors={connectors} onChange={setConnectors} onClose={() => setPanel('none')} />}
+              {activePanel === 'settings' && settings && <SettingsPanel settings={settings} onChange={setSettings} onClose={() => setPanel('none')} />}
+            </div>
+          </aside>
         </div>
       </main>
 
+      {/* ── Agent editor ───────────────────────────────────────── */}
       {editor && selected && (
-        <div className="fixed inset-0 z-30 flex items-center justify-center" style={{ background: '#00000066' }} onClick={() => setEditor(null)}>
-          <div className="w-[420px] rounded-2xl p-4" style={{ background: 'var(--bg-elevated)', border: '0.5px solid var(--border)' }} onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-[15px] font-medium mb-3">Edit agent</h2>
+        <div className="fixed inset-0 z-30 flex items-center justify-center modal-overlay" style={{ background: '#00000066' }} onClick={() => setEditor(null)}>
+          <div className="w-[440px] rounded-2xl p-4 modal-card" style={{ background: 'var(--bg-elevated)', border: '0.5px solid var(--border)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2.5 mb-3">
+              <BlobAvatar hue={selected.hue} size={28} />
+              <h2 className="text-[15px] font-semibold">Edit agent</h2>
+              <button className="ml-auto" style={{ color: 'var(--text-tertiary)' }} onClick={() => setEditor(null)}>
+                ✕
+              </button>
+            </div>
             <input
               value={editor.name}
               onChange={(e) => setEditor({ ...editor, name: e.target.value })}
@@ -751,21 +923,13 @@ export default function App(): React.JSX.Element {
               placeholder="Job"
             />
             <div className="flex flex-wrap gap-2 mt-3">
-              <button onClick={() => void saveEditor()} className="rounded-full px-3 py-1.5 text-[13px]" style={{ background: 'var(--fill-emphasis)', color: 'var(--bubble-user-ink)' }}>
+              <button onClick={() => void saveEditor()} className="rounded-full px-3.5 py-1.5 text-[13px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
                 Save
               </button>
-              <button
-                onClick={() => void api.setBotFlags(selected.id, { pinned: !selected.pinned }).then(upsertBot)}
-                className="rounded-full px-3 py-1.5 text-[13px]"
-                style={{ background: 'var(--fill-secondary)' }}
-              >
+              <button onClick={() => void api.setBotFlags(selected.id, { pinned: !selected.pinned }).then(upsertBot)} className="rounded-full px-3.5 py-1.5 text-[13px]" style={{ background: 'var(--fill-secondary)' }}>
                 {selected.pinned ? 'Unpin' : 'Pin'}
               </button>
-              <button
-                onClick={() => void api.setBotFlags(selected.id, { archived: !selected.archived }).then(upsertBot)}
-                className="rounded-full px-3 py-1.5 text-[13px]"
-                style={{ color: 'var(--text-secondary)' }}
-              >
+              <button onClick={() => void api.setBotFlags(selected.id, { archived: !selected.archived }).then(upsertBot)} className="rounded-full px-3.5 py-1.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
                 {selected.archived ? 'Unarchive' : 'Archive'}
               </button>
               <button
@@ -776,7 +940,7 @@ export default function App(): React.JSX.Element {
                     setEditor(null)
                   })
                 }}
-                className="rounded-full px-3 py-1.5 text-[13px]"
+                className="rounded-full px-3.5 py-1.5 text-[13px]"
                 style={{ background: 'var(--fill-secondary)' }}
               >
                 Duplicate
@@ -785,7 +949,7 @@ export default function App(): React.JSX.Element {
                 onClick={() => {
                   if (confirm(`Clear chat with ${selected.name}?`)) void api.clearThread(selected.id).then(upsertBot)
                 }}
-                className="rounded-full px-3 py-1.5 text-[13px]"
+                className="rounded-full px-3.5 py-1.5 text-[13px]"
                 style={{ color: 'var(--text-secondary)' }}
               >
                 Clear chat
@@ -797,7 +961,7 @@ export default function App(): React.JSX.Element {
                     setEditor(null)
                   }
                 }}
-                className="ml-auto rounded-full px-3 py-1.5 text-[13px]"
+                className="ml-auto rounded-full px-3.5 py-1.5 text-[13px]"
                 style={{ color: 'var(--text-danger)' }}
               >
                 Delete agent

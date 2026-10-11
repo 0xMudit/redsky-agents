@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- One-click installers for a beta launch: `electron-builder` packaging (`npm run dist`) producing NSIS, DMG, and
+  AppImage artifacts, plus a tag-triggered release workflow (`.github/workflows/release.yml`) that builds per-OS
+  and attaches them to a GitHub Release.
+- First-run setup checklist in the composer area: reports whether the OpenCode CLI is on `PATH`, whether a model
+  provider is configured, and whether the server is connected, with links to fix each gap.
+- Beta feedback button in the header that opens a prefilled GitHub issue, including app version, platform,
+  setup status, and a redacted tail of the run log.
 - Test harness on Node's built-in test runner (`npm test`), with esbuild bundling and an Electron double so
   main-process modules run under plain `node --test`. Suites cover the Auto Review gate, reminder parsing, and
   the scheduler — including routine firing, disk rehydration, and reminder dedupe.

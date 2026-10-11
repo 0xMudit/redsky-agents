@@ -5,6 +5,7 @@ import type {
   AppSettings,
   Bot,
   ChatMessage,
+  ComputerEvent,
   Connector,
   FileNode,
   JobTemplate,
@@ -14,17 +15,53 @@ import type {
   Routine,
 } from './types'
 
+/* ── Brand ─────────────────────────────────────────────────── */
+
+export function Logo({ size = 26 }: { size?: number }): React.JSX.Element {
+  return (
+    <span className="flex items-center gap-2 select-none">
+      <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden className="logo-glow">
+        <circle cx="16" cy="16" r="15" fill="var(--accent-soft)" />
+        <path d="M16 6.5a9.5 9.5 0 0 1 0 19Z" fill="var(--accent)" />
+        <path d="M16 6.5a9.5 9.5 0 0 0 0 19Z" fill="#ff8a76" />
+        <rect x="4" y="21.4" width="24" height="1.6" rx="0.8" fill="#0b0d0f" />
+      </svg>
+      <span className="text-[14px] font-semibold tracking-tight logo-word">Red Sky</span>
+    </span>
+  )
+}
+
 export function BlobAvatar({ hue, size = 32 }: { hue: string; size?: number }): React.JSX.Element {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" className="shrink-0 overflow-visible" aria-hidden>
       <path fill={hue} d="M27.4 16.2c0 7.1-5.2 12.4-11.4 12.4S4.6 23.3 4.6 16.2 9.8 3.8 16 3.8s11.4 5.3 11.4 12.4Z" />
-      <ellipse cx="12.3" cy="15.2" rx="2.15" ry="2.5" fill="#1a1a1a" />
-      <ellipse cx="20.2" cy="15.2" rx="2.15" ry="2.5" fill="#1a1a1a" />
+      <ellipse cx="12.3" cy="15.2" rx="2.15" ry="2.5" fill="#141719" />
+      <ellipse cx="20.2" cy="15.2" rx="2.15" ry="2.5" fill="#141719" />
       <circle cx="12.9" cy="14.3" r="0.7" fill="#fff" />
       <circle cx="20.8" cy="14.3" r="0.7" fill="#fff" />
     </svg>
   )
 }
+
+export function StatusDot({ status }: { status: Bot['status'] | 'online' | 'starting' | 'offline' }): React.JSX.Element {
+  const color =
+    status === 'running' || status === 'online'
+      ? 'var(--text-success)'
+      : status === 'waiting' || status === 'starting'
+        ? 'var(--text-warning)'
+        : status === 'error' || status === 'offline'
+          ? 'var(--text-danger)'
+          : 'var(--text-tertiary)'
+  const live = status === 'running' || status === 'online' || status === 'waiting' || status === 'starting'
+  return (
+    <span className="relative inline-flex w-[7px] h-[7px] shrink-0">
+      <span className="w-full h-full rounded-full" style={{ background: color }} />
+      {live ? <span className="absolute inset-0 rounded-full status-halo" style={{ background: color }} /> : null}
+    </span>
+  )
+}
+
+/* ── Primitives ────────────────────────────────────────────── */
 
 export function IconBtn({
   active,
@@ -41,7 +78,7 @@ export function IconBtn({
     <button
       title={title}
       onClick={onClick}
-      className="w-6 h-6 rounded-[6px] flex items-center justify-center"
+      className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[var(--bg-hover)] pressable"
       style={{
         background: active ? 'var(--bg-active)' : 'transparent',
         color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -52,6 +89,77 @@ export function IconBtn({
   )
 }
 
+export function NavItem({
+  active,
+  onClick,
+  icon,
+  label,
+  badge,
+}: {
+  active: boolean
+  onClick: () => void
+  icon: React.ReactNode
+  label: string
+  badge?: number
+}): React.JSX.Element {
+  return (
+    <button
+      onClick={onClick}
+      data-active={active}
+      className="nav-item w-full text-left rounded-[10px] px-2.5 py-2 flex items-center gap-2.5 hover:bg-[var(--sidebar-hover)] pressable"
+      style={{ background: active ? 'var(--sidebar-selected)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--sidebar-muted)' }}
+    >
+      <span className="shrink-0 flex items-center justify-center w-4" style={{ color: active ? 'var(--accent)' : 'inherit' }}>
+        {icon}
+      </span>
+      <span className="text-[13px] font-medium flex-1 truncate">{label}</span>
+      {badge ? (
+        <span
+          className="text-[10px] min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center"
+          style={{ background: 'var(--accent)', color: 'var(--accent-ink)', fontWeight: 600 }}
+        >
+          {badge > 9 ? '9+' : badge}
+        </span>
+      ) : null}
+    </button>
+  )
+}
+
+export function PanelHeader({
+  title,
+  subtitle,
+  action,
+  onClose,
+}: {
+  title: string
+  subtitle?: string
+  action?: React.ReactNode
+  onClose?: () => void
+}): React.JSX.Element {
+  return (
+    <div className="px-4 py-3 flex items-start justify-between gap-2 shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
+      <div className="min-w-0">
+        <h2 className="text-[13px] font-semibold truncate">{title}</h2>
+        {subtitle ? (
+          <p className="text-[11px] mt-1 leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+            {subtitle}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {action}
+        {onClose ? (
+          <button onClick={onClose} title="Collapse panel" className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-[var(--bg-hover)]" style={{ color: 'var(--text-tertiary)' }}>
+            <PanelIcon />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+/* ── Conversation ──────────────────────────────────────────── */
+
 export function MessageBlock({
   role,
   text,
@@ -60,6 +168,7 @@ export function MessageBlock({
   kind,
   editing,
   draft,
+  streaming,
   onDraft,
   onSave,
   onCancel,
@@ -76,6 +185,7 @@ export function MessageBlock({
   kind?: ChatMessage['kind']
   editing?: boolean
   draft?: string
+  streaming?: boolean
   onDraft?: (v: string) => void
   onSave?: () => void
   onCancel?: () => void
@@ -127,7 +237,7 @@ export function MessageBlock({
             style={{ background: 'var(--raised)', border: '0.5px solid var(--border)', color: 'var(--text-primary)' }}
           />
           <div className="flex gap-2 mt-1.5">
-            <button onClick={onSave} className="text-[12px] rounded-full px-3 py-1" style={{ background: 'var(--fill-emphasis)', color: 'var(--bubble-user-ink)' }}>
+            <button onClick={onSave} className="text-[12px] rounded-full px-3 py-1" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
               Save
             </button>
             <button onClick={onCancel} className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
@@ -152,10 +262,10 @@ export function MessageBlock({
   }
   if (role === 'user') {
     return (
-      <div className="group flex flex-col items-end">
+      <div className="group flex flex-col items-end message-in">
         <div
-          className="rounded-2xl px-3.5 py-2.5 text-[14px] leading-5 whitespace-pre-wrap max-w-[72%]"
-          style={{ background: 'var(--bubble-user)', color: 'var(--bubble-user-ink)' }}
+          className="rounded-2xl rounded-br-md px-4 py-2.5 text-[14px] leading-[22px] whitespace-pre-wrap max-w-[72%]"
+          style={{ background: 'var(--bubble-user)', color: 'var(--bubble-user-ink)', fontWeight: 450 }}
         >
           {text}
         </div>
@@ -164,15 +274,15 @@ export function MessageBlock({
     )
   }
   return (
-    <div className="group flex gap-2.5 items-start">
-      <BlobAvatar hue={hue} size={28} />
-      <div className="min-w-0">
+    <div className="group flex gap-3 items-start message-in">
+      <BlobAvatar hue={hue} size={30} />
+      <div className="min-w-0 flex-1">
         <div
-          className="markdown-body text-[14px] leading-5 max-w-[82%] rounded-2xl px-3.5 py-2.5 result-pop"
-          style={{ background: 'var(--bubble-agent)', color: 'var(--text-primary)' }}
+          className="markdown-body text-[14px] leading-[22px] max-w-[84%] rounded-2xl rounded-tl-md px-4 py-3 glass"
           title={name}
         >
           <div dangerouslySetInnerHTML={{ __html: html }} />
+          {streaming ? <span className="stream-caret" /> : null}
         </div>
         {actions}
       </div>
@@ -180,134 +290,547 @@ export function MessageBlock({
   )
 }
 
-export function RunningDots({ hue }: { hue: string }): React.JSX.Element {
+export function RunningDots({ hue, label }: { hue: string; label?: string }): React.JSX.Element {
   return (
-    <div className="flex gap-2.5 items-center">
-      <BlobAvatar hue={hue} size={28} />
-      <div className="flex items-center gap-1" style={{ color: 'var(--text-tertiary)' }}>
-        <span className="typing-dot" />
-        <span className="typing-dot" />
-        <span className="typing-dot" />
+    <div className="flex flex-col gap-2 motion-fade-up">
+      <div className="flex gap-2.5 items-center">
+        <BlobAvatar hue={hue} size={28} />
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1" style={{ color: 'var(--text-accent)' }}>
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+            <span className="typing-dot" />
+          </span>
+          {label ? <span className="text-[12px] shimmer-text">{label}</span> : <span className="text-[12px] shimmer-text">Working…</span>}
+        </div>
+      </div>
+      <div className="ml-[38px] w-56 max-w-[60%] progress-track">
+        <i />
       </div>
     </div>
   )
 }
 
-export function TrafficLights(): React.JSX.Element {
+/* ── Activity / results ────────────────────────────────────── */
+
+function eventIcon(kind: ComputerEvent['kind']): React.JSX.Element {
+  switch (kind) {
+    case 'file':
+      return <FileIcon />
+    case 'shell':
+      return <ShellIcon />
+    case 'note':
+      return <NoteIcon />
+    case 'handoff':
+      return <HandoffIcon />
+    case 'review':
+      return <CheckIcon />
+    default:
+      return <ToolIcon />
+  }
+}
+
+function eventTint(kind: ComputerEvent['kind']): string {
+  switch (kind) {
+    case 'file':
+      return '#8bd0ff'
+    case 'shell':
+      return 'var(--text-warning)'
+    case 'review':
+      return 'var(--text-success)'
+    case 'handoff':
+      return 'var(--text-accent)'
+    default:
+      return 'var(--text-accent)'
+  }
+}
+
+export function ComputerEventCard({ ev }: { ev: ComputerEvent }): React.JSX.Element {
   return (
-    <div className="window-no-drag flex items-center gap-[7px] pr-1">
-      <button aria-label="Close" onClick={() => api.windowClose()} className="w-3 h-3 rounded-full bg-[#ff5f57]" />
-      <button aria-label="Minimize" onClick={() => api.windowMinimize()} className="w-3 h-3 rounded-full bg-[#febc2e]" />
-      <button aria-label="Zoom" onClick={() => api.windowMaximize()} className="w-3 h-3 rounded-full bg-[#28c840]" />
+    <div className="flex gap-2.5 rounded-xl px-3 py-2 activity-in card-hover" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
+      <span className="mt-0.5 shrink-0" style={{ color: eventTint(ev.kind) }}>
+        {eventIcon(ev.kind)}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[12.5px] font-medium truncate">{ev.title}</span>
+          <span className="text-[10px] shrink-0" style={{ color: 'var(--text-tertiary)' }}>
+            {timeLabel(ev.at)}
+          </span>
+        </div>
+        {ev.detail ? (
+          <div className="text-[11.5px] mt-0.5 truncate" style={{ color: 'var(--text-tertiary)', fontFamily: ev.kind === 'shell' ? 'var(--mono)' : undefined }}>
+            {ev.detail}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
 
-export function EmptyState({
-  templates,
-  onPick,
-  onNew,
-}: {
-  templates: JobTemplate[]
-  onPick: (t: JobTemplate) => void
-  onNew: () => void
-}): React.JSX.Element {
+function DiffList({ label, files, tone }: { label: string; files: string[]; tone: 'add' | 'chg' | 'del' }): React.JSX.Element | null {
+  if (!files.length) return null
+  const color = tone === 'add' ? 'var(--text-success)' : tone === 'del' ? 'var(--text-danger)' : 'var(--text-warning)'
+  const sign = tone === 'add' ? '+' : tone === 'del' ? '−' : '~'
   return (
-    <div className="h-full min-h-[320px] flex flex-col items-center justify-center text-center px-8">
-      <h2 className="text-[28px] font-medium tracking-tight">Meet your first Bot</h2>
-      <p className="mt-2 text-[14px] max-w-md leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-        Give it a job. It works on this machine, keeps context, and comes back when it needs you.
-      </p>
-      <button
-        onClick={onNew}
-        className="mt-5 rounded-full text-[13px] font-medium px-4 py-2"
-        style={{ background: 'var(--fill-emphasis)', color: 'var(--bubble-user-ink)' }}
-      >
-        New agent
-      </button>
-      <div className="mt-8 flex flex-wrap justify-center gap-1.5 max-w-xl">
-        {templates.map((t) => (
-          <button
-            key={t.name}
-            onClick={() => onPick(t)}
-            className="rounded-full px-3 py-1.5 text-[12px] hover:bg-[var(--bg-hover)]"
-            style={{ color: 'var(--text-secondary)', border: '0.5px solid var(--border)' }}
-          >
-            {t.name}
-          </button>
+    <div className="mt-1.5">
+      <div className="text-[10px] uppercase tracking-wider mb-1" style={{ color }}>
+        {sign} {label} · {files.length}
+      </div>
+      <div className="space-y-0.5">
+        {files.map((f) => (
+          <div key={f} className="text-[11.5px] truncate" style={{ fontFamily: 'var(--mono)', color: 'var(--text-secondary)' }}>
+            {f}
+          </div>
         ))}
       </div>
     </div>
   )
 }
 
-export function ComputerPanel({
+export function RunResultCard({
+  bot,
+  onOpenFile,
+  onOpenActivity,
+}: {
+  bot: Bot
+  onOpenFile: (p: string) => void
+  onOpenActivity?: () => void
+}): React.JSX.Element | null {
+  const diff = bot.runDiff
+  const artifacts = bot.artifacts ?? []
+  const hasDiff = Boolean(diff && (diff.added.length || diff.changed.length || diff.removed.length))
+  if (!hasDiff && !artifacts.length) return null
+  return (
+    <div className="rounded-2xl p-3.5 result-pop card-hover" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
+      <div className="flex items-center gap-2">
+        <span style={{ color: 'var(--text-success)' }}>
+          <CheckIcon />
+        </span>
+        <span className="text-[12.5px] font-semibold">Result</span>
+        {hasDiff ? (
+          <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+            {diff!.added.length} added · {diff!.changed.length} changed · {diff!.removed.length} removed
+          </span>
+        ) : null}
+        <button onClick={onOpenActivity} className="ml-auto text-[10.5px]" style={{ color: 'var(--text-accent)' }}>
+          View activity
+        </button>
+      </div>
+      {hasDiff ? (
+        <>
+          <DiffList label="added" files={diff!.added} tone="add" />
+          <DiffList label="changed" files={diff!.changed} tone="chg" />
+          <DiffList label="removed" files={diff!.removed} tone="del" />
+        </>
+      ) : null}
+      {artifacts.length ? (
+        <div className="mt-2.5">
+          <div className="text-[10px] uppercase tracking-wider mb-1.5" style={{ color: 'var(--text-tertiary)' }}>
+            Artifacts · {artifacts.length}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {artifacts.map((a) => (
+              <button
+                key={a.path}
+                onClick={() => onOpenFile(a.path)}
+                className="text-[11.5px] rounded-lg px-2 py-1 hover:bg-[var(--bg-hover)] flex items-center gap-1.5"
+                style={{ border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+                title={a.path}
+              >
+                <FileIcon />
+                {a.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export function ActivitySummary({
+  bot,
+  onOpen,
+}: {
+  bot: Bot
+  onOpen: () => void
+}): React.JSX.Element | null {
+  const n = bot.computer.length
+  if (!n) return null
+  const changed = bot.runDiff ? bot.runDiff.added.length + bot.runDiff.changed.length + bot.runDiff.removed.length : 0
+  return (
+    <button
+      onClick={onOpen}
+      className="self-start flex items-center gap-2 rounded-xl px-3 py-2 hover:bg-[var(--bg-hover)] activity-in pressable"
+      style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+    >
+      <span style={{ color: 'var(--text-accent)' }}>
+        <ActivityIcon />
+      </span>
+      <span className="text-[12px]">
+        {n} step{n === 1 ? '' : 's'}
+        {changed ? ` · ${changed} file${changed === 1 ? '' : 's'} touched` : ''}
+      </span>
+      <span className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
+        View activity
+      </span>
+    </button>
+  )
+}
+
+export function ApprovalCard({
+  bot,
+  onRespond,
+}: {
+  bot: Bot
+  onRespond: (response: 'once' | 'always' | 'reject') => void
+}): React.JSX.Element | null {
+  const p = bot.pendingPermission
+  if (!p) return null
+  return (
+    <div className="rounded-2xl p-3.5 max-w-lg result-pop" style={{ background: 'color-mix(in srgb, var(--text-warning) 10%, var(--bg-card))', border: '0.5px solid color-mix(in srgb, var(--text-warning) 34%, transparent)' }}>
+      <div className="flex items-center gap-2">
+        <span style={{ color: 'var(--text-warning)' }}>
+          <AlertIcon />
+        </span>
+        <span className="text-[11px] uppercase tracking-wider" style={{ color: 'var(--text-warning)' }}>
+          Approval needed
+        </span>
+        <span className="ml-auto w-2 h-2 rounded-full status-halo relative" style={{ background: 'var(--text-warning)' }} />
+      </div>
+      <p className="text-[14px] font-semibold mt-1.5">{p.title}</p>
+      <p className="text-[13px] mt-1 whitespace-pre-wrap" style={{ color: 'var(--text-tertiary)' }}>
+        {p.detail}
+      </p>
+      <div className="flex gap-2 mt-3">
+        <button onClick={() => onRespond('once')} className="text-[13px] font-medium rounded-full px-3 py-1.5" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+          Allow once
+        </button>
+        <button onClick={() => onRespond('always')} className="text-[13px] rounded-full px-3 py-1.5" style={{ background: 'var(--fill-secondary)' }}>
+          Always
+        </button>
+        <button onClick={() => onRespond('reject')} className="text-[13px] px-3 py-1.5" style={{ color: 'var(--text-danger)' }}>
+          Reject
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ── Right-hand panels ─────────────────────────────────────── */
+
+export function ActivityPanel({
   bot,
   files,
   fileView,
   onOpenWorkspace,
   onOpenFile,
+  onCollapse,
 }: {
   bot: Bot | null
   files: FileNode[]
   fileView: { path: string; content: string } | null
   onOpenWorkspace: () => void
   onOpenFile: (p: string) => void
+  onCollapse?: () => void
 }): React.JSX.Element {
+  const events = (bot?.computer ?? []).slice().reverse()
+  const diff = bot?.runDiff
+  const artifacts = bot?.artifacts ?? []
   return (
     <>
-      <div className="h-11 px-4 flex items-center justify-between shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <h2 className="text-[13px] font-medium">{bot ? `${bot.name}'s computer` : 'Computer'}</h2>
-        <button onClick={onOpenWorkspace} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
-          Open folder
-        </button>
-      </div>
+      <PanelHeader
+        title={bot ? `${bot.name} · activity` : 'Activity'}
+        subtitle={bot?.activity ? bot.activity : 'Live timeline of what this agent is doing.'}
+        onClose={onCollapse}
+        action={
+          <button onClick={onOpenWorkspace} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
+            Open folder
+          </button>
+        }
+      />
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
+        {bot?.pendingPermission ? (
+          <section>
+            <SectionLabel>Approvals</SectionLabel>
+            <ApprovalCard
+              bot={bot}
+              onRespond={(response) => void api.permission({ botId: bot.id, permissionId: bot.pendingPermission!.id, response })}
+            />
+          </section>
+        ) : null}
+
+        {bot?.error ? (
+          <section>
+            <SectionLabel>Errors</SectionLabel>
+            <div className="rounded-xl px-3 py-2 text-[12.5px] flex gap-2" style={{ background: 'color-mix(in srgb, var(--text-danger) 12%, transparent)', color: 'var(--text-danger)', border: '0.5px solid color-mix(in srgb, var(--text-danger) 30%, transparent)' }}>
+              <AlertIcon />
+              <span className="min-w-0 break-words">{bot.error}</span>
+            </div>
+          </section>
+        ) : null}
+
         <section>
-          <h3 className="text-[10px] uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
-            Activity
-          </h3>
-          {(bot?.computer ?? [])
-            .slice()
-            .reverse()
-            .map((c) => (
-              <div key={c.id} className="mb-2 rounded-[12px] px-2.5 py-2" style={{ background: 'var(--bg-card)' }}>
-                <div className="text-[12px]">{c.title}</div>
-                <div className="text-[11px] truncate" style={{ color: 'var(--text-tertiary)' }}>
-                  {c.detail}
-                </div>
-              </div>
+          <SectionLabel>Timeline</SectionLabel>
+          <div className="space-y-1.5">
+            {events.map((c) => (
+              <ComputerEventCard key={c.id} ev={c} />
             ))}
-          {!bot?.computer.length && (
+            {!events.length && (
+              <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+                {bot?.status === 'running' ? 'Working…' : 'No tool activity yet.'}
+              </p>
+            )}
+          </div>
+        </section>
+
+        {diff && (diff.added.length || diff.changed.length || diff.removed.length) ? (
+          <section>
+            <SectionLabel>File changes</SectionLabel>
+            <div className="rounded-xl px-3 py-2.5" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
+              <DiffList label="added" files={diff.added} tone="add" />
+              <DiffList label="changed" files={diff.changed} tone="chg" />
+              <DiffList label="removed" files={diff.removed} tone="del" />
+            </div>
+          </section>
+        ) : null}
+
+        {artifacts.length ? (
+          <section>
+            <SectionLabel>Artifacts</SectionLabel>
+            <div className="flex flex-wrap gap-1.5">
+              {artifacts.map((a) => (
+                <button
+                  key={a.path}
+                  onClick={() => onOpenFile(a.path)}
+                  className="text-[11.5px] rounded-lg px-2 py-1 hover:bg-[var(--bg-hover)] flex items-center gap-1.5"
+                  style={{ border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+                  title={a.path}
+                >
+                  <FileIcon />
+                  {a.title}
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <section>
+          <SectionLabel>Workspace</SectionLabel>
+          {files.length ? (
+            <div className="space-y-0.5">
+              {files.map((f) => (
+                <button
+                  key={f.path}
+                  onClick={() => onOpenFile(f.path)}
+                  className="block w-full text-left text-[12px] py-1 px-1.5 rounded-md hover:bg-[var(--bg-hover)] hover:text-white truncate"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {f.name || f.path}
+                </button>
+              ))}
+            </div>
+          ) : (
             <p className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-              No tool activity yet.
+              Workspace is empty.
             </p>
           )}
         </section>
-        <section>
-          <h3 className="text-[10px] uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
-            Workspace
-          </h3>
-          {files.map((f) => (
-            <button
-              key={f.path}
-              onClick={() => onOpenFile(f.path)}
-              className="block w-full text-left text-[12px] py-1 hover:text-white truncate"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              {f.name || f.path}
-            </button>
-          ))}
-        </section>
-        {fileView && (
+
+        {fileView ? (
           <section>
-            <h3 className="text-[10px] uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
-              {fileView.path}
-            </h3>
-            <pre className="text-[11px] whitespace-pre-wrap rounded-[10px] p-2 max-h-64 overflow-auto" style={{ background: '#111', color: 'var(--text-secondary)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <SectionLabel>{fileView.path}</SectionLabel>
+            </div>
+            <pre className="text-[11px] whitespace-pre-wrap rounded-[10px] p-2.5 max-h-72 overflow-auto" style={{ background: '#0a0c0e', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', border: '0.5px solid var(--border)' }}>
               {fileView.content}
             </pre>
           </section>
+        ) : null}
+      </div>
+    </>
+  )
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return (
+    <h3 className="text-[10px] uppercase tracking-wider mb-2" style={{ color: 'var(--text-tertiary)' }}>
+      {children}
+    </h3>
+  )
+}
+
+export function RoomsPanel({
+  rooms,
+  bots,
+  onChange,
+  onClose,
+}: {
+  rooms: Room[]
+  bots: Bot[]
+  onChange: (r: Room[]) => void
+  onClose?: () => void
+}): React.JSX.Element {
+  const [title, setTitle] = useState('')
+  const [picked, setPicked] = useState<string[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftTitle, setDraftTitle] = useState('')
+  const [addMap, setAddMap] = useState<Record<string, string>>({})
+
+  const refresh = async () => onChange(await api.listRooms())
+  const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
+  const create = async () => {
+    if (!picked.length) return
+    await api.createRoom({ title: title.trim() || 'Thread', participantIds: picked })
+    setTitle('')
+    setPicked([])
+    await refresh()
+  }
+  const saveRename = async (id: string) => {
+    if (draftTitle.trim()) await api.renameRoom(id, draftTitle.trim())
+    setEditingId(null)
+    await refresh()
+  }
+
+  return (
+    <>
+      <PanelHeader title="Rooms" subtitle="Bring agents together in a shared thread." onClose={onClose} />
+      <div className="p-3 grid gap-2" style={{ borderBottom: '0.5px solid var(--border)' }}>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Room name"
+          className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none"
+          style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}
+        />
+        <div className="flex flex-wrap gap-1.5">
+          {bots.map((b) => {
+            const on = picked.includes(b.id)
+            return (
+              <button
+                key={b.id}
+                onClick={() => toggle(b.id)}
+                className="flex items-center gap-1.5 rounded-full pl-1 pr-2.5 py-1 text-[11.5px]"
+                style={{ background: on ? 'var(--accent-soft)' : 'var(--bg-card)', border: `0.5px solid ${on ? 'var(--accent)' : 'var(--border)'}`, color: on ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+              >
+                <BlobAvatar hue={b.hue} size={18} />
+                {b.name}
+              </button>
+            )
+          })}
+        </div>
+        <button onClick={() => void create()} disabled={!picked.length} className="rounded-[10px] py-2 text-[12px] font-medium disabled:opacity-40" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+          Create room
+        </button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {rooms.map((r) => {
+          const members = r.participantIds.map((id) => bots.find((b) => b.id === id)).filter(Boolean) as Bot[]
+          const addable = bots.filter((b) => !r.participantIds.includes(b.id))
+          return (
+            <div key={r.id} className="rounded-[12px] px-3 py-2.5" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
+              <div className="flex items-center gap-2">
+                {editingId === r.id ? (
+                  <>
+                    <input
+                      value={draftTitle}
+                      autoFocus
+                      onChange={(e) => setDraftTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void saveRename(r.id)
+                        if (e.key === 'Escape') setEditingId(null)
+                      }}
+                      className="flex-1 rounded-md px-2 py-1 text-[12px] outline-none"
+                      style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}
+                    />
+                    <button onClick={() => void saveRename(r.id)} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
+                      Save
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[12.5px] font-medium flex-1 truncate">{r.title}</span>
+                    <button
+                      onClick={() => {
+                        setEditingId(r.id)
+                        setDraftTitle(r.title)
+                      }}
+                      className="text-[10.5px]"
+                      style={{ color: 'var(--text-tertiary)' }}
+                    >
+                      rename
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (confirm(`Delete room “${r.title}”?`)) {
+                          await api.deleteRoom(r.id)
+                          await refresh()
+                        }
+                      }}
+                      className="text-[10.5px]"
+                      style={{ color: 'var(--text-danger)' }}
+                    >
+                      delete
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 mt-2">
+                {members.map((b) => (
+                  <span key={b.id} title={b.name}>
+                    <BlobAvatar hue={b.hue} size={20} />
+                  </span>
+                ))}
+                {!members.length && (
+                  <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+                    No participants
+                  </span>
+                )}
+              </div>
+              {r.preview ? (
+                <p className="text-[11px] mt-1.5 truncate" style={{ color: 'var(--text-tertiary)' }}>
+                  {r.preview}
+                </p>
+              ) : null}
+              {addable.length ? (
+                <div className="flex items-center gap-2 mt-2">
+                  <select
+                    value={addMap[r.id] ?? ''}
+                    onChange={(e) => setAddMap((m) => ({ ...m, [r.id]: e.target.value }))}
+                    className="flex-1 rounded-md px-1.5 py-1 text-[11px] outline-none"
+                    style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+                  >
+                    <option value="">Add agent…</option>
+                    {addable.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={async () => {
+                      const id = addMap[r.id]
+                      if (!id) return
+                      await api.addToRoom(r.id, id)
+                      setAddMap((m) => ({ ...m, [r.id]: '' }))
+                      await refresh()
+                    }}
+                    disabled={!addMap[r.id]}
+                    className="text-[11px] disabled:opacity-40"
+                    style={{ color: 'var(--text-accent)' }}
+                  >
+                    Add
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          )
+        })}
+        {!rooms.length && (
+          <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+            No rooms yet. Pick a couple of agents above and create one.
+          </p>
         )}
       </div>
     </>
@@ -318,10 +841,12 @@ export function MemoryPanel({
   memories,
   botId,
   onChange,
+  onClose,
 }: {
   memories: MemoryRow[]
   botId?: string
   onChange: (m: MemoryRow[]) => void
+  onClose?: () => void
 }): React.JSX.Element {
   const [key, setKey] = useState('')
   const [value, setValue] = useState('')
@@ -334,29 +859,33 @@ export function MemoryPanel({
   }
   return (
     <>
-      <div className="h-11 px-4 flex items-center justify-between shrink-0" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <h2 className="text-[13px] font-medium">Memory</h2>
-        <button
-          onClick={async () => {
-            await api.clearMemories()
-            onChange([])
-          }}
-          className="text-[11px]"
-          style={{ color: 'var(--text-danger)' }}
-        >
-          Clear
-        </button>
-      </div>
+      <PanelHeader
+        title="Memory"
+        subtitle="Facts agents carry between runs."
+        onClose={onClose}
+        action={
+          <button
+            onClick={async () => {
+              await api.clearMemories()
+              onChange([])
+            }}
+            className="text-[11px]"
+            style={{ color: 'var(--text-danger)' }}
+          >
+            Clear
+          </button>
+        }
+      />
       <div className="p-3 grid gap-2" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="key" className="rounded-[10px] px-2 py-1.5 text-[12px] outline-none" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="what to remember" className="rounded-[10px] px-2 py-1.5 text-[12px] outline-none" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <button onClick={() => void add()} disabled={!key.trim() || !value.trim()} className="rounded-[10px] py-1.5 text-[12px] disabled:opacity-40" style={{ background: 'var(--bg-active)' }}>
+        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="key" className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="what to remember" className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <button onClick={() => void add()} disabled={!key.trim() || !value.trim()} className="rounded-[10px] py-2 text-[12px] font-medium disabled:opacity-40" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
           Remember
         </button>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {memories.map((m) => (
-          <div key={m.id} className="rounded-[12px] px-3 py-2" style={{ background: 'var(--bg-card)' }}>
+          <div key={m.id} className="rounded-[12px] px-3 py-2" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
             <div className="flex justify-between gap-2">
               <span className="text-[12px] font-medium" style={{ color: 'var(--text-accent)' }}>
                 {m.key}
@@ -377,6 +906,11 @@ export function MemoryPanel({
             </p>
           </div>
         ))}
+        {!memories.length && (
+          <p className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+            Nothing remembered yet.
+          </p>
+        )}
       </div>
     </>
   )
@@ -387,11 +921,13 @@ export function RoutinePanel({
   bots,
   selectedId,
   onChange,
+  onClose,
 }: {
   routines: Routine[]
   bots: Bot[]
   selectedId?: string
   onChange: (r: Routine[]) => void
+  onClose?: () => void
 }): React.JSX.Element {
   const [schedule, setSchedule] = useState('every 60 m')
   const [prompt, setPrompt] = useState('')
@@ -409,19 +945,14 @@ export function RoutinePanel({
   }
   return (
     <>
-      <div className="px-4 py-3" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <h2 className="text-[13px] font-medium">Routines</h2>
-        <p className="text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
-          Teach a finished task, or schedule with `every 30 m`, `every 2 h`, or `09:00`.
-        </p>
-      </div>
+      <PanelHeader title="Schedules" subtitle="Teach a finished task, or schedule with `every 30 m`, `every 2 h`, or `09:00`." onClose={onClose} />
       <div className="p-3 grid gap-2" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <input value={schedule} onChange={(e) => setSchedule(e.target.value)} className="rounded-[10px] px-2 py-1.5 text-[12px] outline-none" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="what to run" className="rounded-[10px] px-2 py-1.5 text-[12px] outline-none" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <button onClick={() => void add()} disabled={!prompt.trim() || !botId} className="rounded-[10px] py-1.5 text-[12px] disabled:opacity-40" style={{ background: 'var(--bg-active)' }}>
+        <input value={schedule} onChange={(e) => setSchedule(e.target.value)} className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="what to run" className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <button onClick={() => void add()} disabled={!prompt.trim() || !botId} className="rounded-[10px] py-2 text-[12px] font-medium disabled:opacity-40" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
           Schedule
         </button>
-        <button onClick={() => void teach()} disabled={!botId} className="rounded-[10px] py-1.5 text-[12px]" style={{ color: 'var(--text-accent)' }}>
+        <button onClick={() => void teach()} disabled={!botId} className="rounded-[10px] py-2 text-[12px]" style={{ color: 'var(--text-accent)', background: 'var(--bg-card)' }}>
           Teach last task
         </button>
       </div>
@@ -429,11 +960,11 @@ export function RoutinePanel({
         {routines.map((r) => {
           const bot = bots.find((b) => b.id === r.botId)
           return (
-            <div key={r.id} className="rounded-[12px] px-3 py-2" style={{ background: 'var(--bg-card)' }}>
+            <div key={r.id} className="rounded-[12px] px-3 py-2" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
               <div className="flex justify-between text-[12px]">
-                <span>
+                <span className="font-medium">
                   {bot?.name ?? r.botId}
-                  {r.origin === 'taught' ? ' · taught' : ''}
+                  {r.origin === 'taught' ? <span style={{ color: 'var(--text-tertiary)' }}> · taught</span> : null}
                 </span>
                 <span style={{ color: 'var(--text-tertiary)' }}>{r.schedule}</span>
               </div>
@@ -447,7 +978,7 @@ export function RoutinePanel({
                     onChange(await api.listRoutines())
                   }}
                   className="text-[10px]"
-                  style={{ color: 'var(--text-accent)' }}
+                  style={{ color: r.enabled ? 'var(--text-warning)' : 'var(--text-accent)' }}
                 >
                   {r.enabled ? 'Disable' : 'Enable'}
                 </button>
@@ -465,6 +996,11 @@ export function RoutinePanel({
             </div>
           )
         })}
+        {!routines.length && (
+          <p className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+            No schedules yet.
+          </p>
+        )}
       </div>
     </>
   )
@@ -473,23 +1009,32 @@ export function RoutinePanel({
 export function ConnectorsPanel({
   connectors,
   onChange,
+  onClose,
 }: {
   connectors: Connector[]
   onChange: (c: Connector[]) => void
+  onClose?: () => void
 }): React.JSX.Element {
   return (
     <>
-      <div className="px-4 py-3" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <h2 className="text-[13px] font-medium">Connectors</h2>
-        <p className="text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
-          Mark tools this machine can use. Sending and spend still go through Auto Review.
-        </p>
-      </div>
+      <PanelHeader
+        title="Connectors"
+        subtitle="Intent tracking only — live OAuth is coming soon. Marking a tool here tells agents you plan to use it; no real connection is made yet."
+        onClose={onClose}
+      />
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {connectors.map((c) => (
-          <div key={c.id} className="rounded-[12px] px-3 py-2" style={{ background: 'var(--bg-card)' }}>
+          <div key={c.id} className="rounded-[12px] px-3 py-2.5" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[13px] font-medium">{c.name}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] font-medium">{c.name}</span>
+                <span
+                  className="text-[9px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full"
+                  style={{ background: 'color-mix(in srgb, var(--text-warning) 15%, transparent)', color: 'var(--text-warning)' }}
+                >
+                  Coming soon
+                </span>
+              </div>
               <button
                 onClick={async () => {
                   await api.updateConnector({
@@ -518,53 +1063,67 @@ export function ConnectorsPanel({
 export function SettingsPanel({
   settings,
   onChange,
+  onClose,
 }: {
   settings: AppSettings
   onChange: (s: AppSettings) => void
+  onClose?: () => void
 }): React.JSX.Element {
   const setReview = async (autoReview: ReviewMode) => onChange(await api.updateSettings({ autoReview }))
+  const Toggle = ({ on, onToggle }: { on: boolean; onToggle: () => void }): React.JSX.Element => (
+    <button
+      onClick={onToggle}
+      className="w-9 h-5 rounded-full relative shrink-0"
+      style={{ background: on ? 'var(--accent)' : 'var(--bg-active)' }}
+      role="switch"
+      aria-checked={on}
+    >
+      <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: on ? 18 : 2 }} />
+    </button>
+  )
   return (
     <>
-      <div className="px-4 py-3" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <h2 className="text-[13px] font-medium">Settings</h2>
-      </div>
-      <div className="p-3 space-y-4 text-[12px]">
+      <PanelHeader title="Settings" onClose={onClose} />
+      <div className="p-4 space-y-5 text-[12.5px]">
         <label className="flex items-center justify-between gap-3">
-          <span>Privacy mode</span>
-          <input
-            type="checkbox"
-            checked={settings.privacyMode}
-            onChange={(e) => void api.updateSettings({ privacyMode: e.target.checked }).then(onChange)}
-          />
+          <span className="flex-1">
+            Privacy mode
+            <span className="block text-[11px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+              Keep runs on this machine.
+            </span>
+          </span>
+          <Toggle on={settings.privacyMode} onToggle={() => void api.updateSettings({ privacyMode: !settings.privacyMode }).then(onChange)} />
         </label>
         <label className="flex items-center justify-between gap-3">
-          <span>Bot-to-bot handoff</span>
-          <input
-            type="checkbox"
-            checked={settings.allowBotHandoff}
-            onChange={(e) => void api.updateSettings({ allowBotHandoff: e.target.checked }).then(onChange)}
-          />
+          <span className="flex-1">
+            Bot-to-bot handoff
+            <span className="block text-[11px] mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
+              Let agents pass work to each other.
+            </span>
+          </span>
+          <Toggle on={settings.allowBotHandoff} onToggle={() => void api.updateSettings({ allowBotHandoff: !settings.allowBotHandoff }).then(onChange)} />
         </label>
         <div>
-          <div className="mb-2" style={{ color: 'var(--text-tertiary)' }}>
-            Auto Review
+          <div className="mb-2 font-medium">Auto Review</div>
+          <div className="flex gap-1.5">
+            {(['sensitive', 'always', 'off'] as ReviewMode[]).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => void setReview(mode)}
+                className="rounded-full px-3 py-1.5 text-[12px] capitalize"
+                style={{
+                  background: settings.autoReview === mode ? 'var(--accent-soft)' : 'transparent',
+                  border: `0.5px solid ${settings.autoReview === mode ? 'var(--accent)' : 'var(--border)'}`,
+                  color: settings.autoReview === mode ? 'var(--text-primary)' : 'var(--text-secondary)',
+                }}
+              >
+                {mode}
+              </button>
+            ))}
           </div>
-          {(['sensitive', 'always', 'off'] as ReviewMode[]).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => void setReview(mode)}
-              className="mr-2 mb-2 rounded-full px-2.5 py-1"
-              style={{
-                background: settings.autoReview === mode ? 'var(--bg-active)' : 'transparent',
-                border: '0.5px solid var(--border)',
-              }}
-            >
-              {mode}
-            </button>
-          ))}
         </div>
         <p style={{ color: 'var(--text-tertiary)' }}>Max parallel bots: {settings.maxParallelBots}</p>
-        <button onClick={() => void api.openLogs()} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
+        <button onClick={() => void api.openLogs()} className="text-[11.5px]" style={{ color: 'var(--text-accent)' }}>
           Open logs
         </button>
       </div>
@@ -583,6 +1142,8 @@ export function Toast({ text, onDismiss }: { text: string; onDismiss: () => void
   )
 }
 
+/* ── Sidebar ───────────────────────────────────────────────── */
+
 export function BotRow({
   bot,
   active,
@@ -595,40 +1156,141 @@ export function BotRow({
   onSelect: () => void
 }): React.JSX.Element {
   const archived = Boolean(bot.archived)
+  const isLive = bot.status === 'running'
+  const needsYou = bot.status === 'waiting'
   return (
     <button
       onClick={onSelect}
       title={archived ? `${bot.name} · archived` : bot.name}
-      className="w-full text-left rounded-[10px] px-2 py-2 mb-0.5 flex items-center gap-2 transition-colors hover:bg-[var(--sidebar-hover)]"
-      style={{ background: active ? 'var(--sidebar-selected)' : 'transparent', opacity: archived ? 0.55 : 1 }}
+      className={`w-full text-left rounded-[12px] px-2.5 py-2.5 mb-1 flex items-center gap-3 pressable transition-all ${active ? 'bot-row-active' : 'hover:bg-[var(--sidebar-hover)]'}`}
+      style={{ opacity: archived ? 0.5 : 1 }}
     >
-      <span className="relative">
-        <BlobAvatar hue={bot.hue} size={32} />
-        {unread && <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full hit-pulse" style={{ background: bot.hue }} />}
+      <span className="relative shrink-0">
+        <BlobAvatar hue={bot.hue} size={34} />
+        {isLive && (
+          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 flex items-center justify-center" style={{ background: 'var(--text-success)', borderColor: 'var(--sidebar-tint)' }}>
+            <span className="w-full h-full rounded-full status-halo" style={{ background: 'var(--text-success)' }} />
+          </span>
+        )}
+        {needsYou && (
+          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2" style={{ background: 'var(--text-warning)', borderColor: 'var(--sidebar-tint)' }} />
+        )}
+        {unread && !isLive && !needsYou && (
+          <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full hit-pulse" style={{ background: 'var(--accent)' }} />
+        )}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5">
-          {bot.pinned && (
-            <span
-              className="w-1.5 h-1.5 rounded-full shrink-0"
-              style={{ background: 'var(--text-accent)' }}
-              title="Pinned"
-            />
-          )}
-          <span className="text-[13px] font-medium truncate" style={{ color: 'var(--sidebar-text)' }}>
+        <span className="flex items-center gap-1">
+          {bot.pinned && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: 'var(--accent)' }} title="Pinned" />}
+          <span className="text-[13px] font-semibold truncate" style={{ color: active ? 'var(--text-primary)' : 'var(--sidebar-text)' }}>
             {bot.name}
           </span>
-          <span className="ml-auto text-[11px] shrink-0" style={{ color: unread ? 'var(--text-accent)' : 'var(--sidebar-faint)' }}>
-            {unread ? 'New' : archived ? 'Archived' : timeLabel(bot.updatedAt)}
+          <span className="ml-auto text-[10px] shrink-0 tabular-nums" style={{ color: unread ? 'var(--text-accent)' : 'var(--sidebar-faint)' }}>
+            {unread ? '● New' : archived ? 'Archived' : timeLabel(bot.updatedAt)}
           </span>
         </span>
-        <span className="block text-[12px] truncate mt-0.5" style={{ color: 'var(--sidebar-muted)' }}>
-          {bot.status === 'running' ? 'Working…' : bot.status === 'waiting' ? 'Needs you' : bot.preview || bot.job || 'No messages yet'}
+        <span className="block text-[11.5px] truncate mt-0.5" style={{ color: isLive ? 'var(--text-success)' : needsYou ? 'var(--text-warning)' : 'var(--sidebar-muted)' }}>
+          {isLive ? '⚡ Working…' : needsYou ? '⚠ Needs you' : bot.preview || bot.job || 'No messages yet'}
         </span>
       </span>
     </button>
   )
 }
+
+export function EmptyState({
+  templates,
+  onPick,
+  onNew,
+}: {
+  templates: JobTemplate[]
+  onPick: (t: JobTemplate) => void
+  onNew: () => void
+}): React.JSX.Element {
+  const ICONS: Record<string, string> = {
+    'Sales Outbound': '📤',
+    'Talent Scout': '🔍',
+    'Paid Media': '📊',
+    'Expense Manager': '🧾',
+    'Product Performance': '📈',
+    'Bug Reproduction': '🐛',
+    'Account Health': '💼',
+    'Chief of Staff': '🎯',
+  }
+  return (
+    <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-center px-8 py-10 motion-fade-up select-none">
+      {/* hero */}
+      <div className="motion-scale" style={{ animationDelay: '60ms' }}>
+        <div className="relative inline-flex">
+          <div className="absolute inset-0 rounded-full blur-2xl opacity-40" style={{ background: 'radial-gradient(circle, var(--accent) 0%, transparent 70%)' }} />
+          <Logo size={48} />
+        </div>
+      </div>
+
+      <h2 className="mt-6 text-[32px] font-bold tracking-tight leading-tight motion-rise" style={{ animationDelay: '80ms' }}>
+        Your AI team,{' '}
+        <span className="logo-word">on your machine</span>
+      </h2>
+      <p className="mt-3 text-[15px] max-w-sm leading-relaxed motion-rise" style={{ color: 'var(--text-secondary)', animationDelay: '120ms' }}>
+        Spin up a bot, give it a job, watch it work. Comes back when it needs a human.
+      </p>
+
+      <button
+        onClick={onNew}
+        className="mt-7 rounded-full text-[14px] font-semibold px-6 py-3 btn-sheen pressable motion-scale glow-accent"
+        style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)', animationDelay: '160ms' }}
+      >
+        + New agent
+      </button>
+
+      {/* template grid */}
+      {templates.length > 0 && (
+        <div className="mt-10 w-full max-w-xl motion-rise" style={{ animationDelay: '200ms' }}>
+          <p className="text-[11px] uppercase tracking-widest mb-4" style={{ color: 'var(--text-tertiary)' }}>
+            Start with a template
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {templates.slice(0, 8).map((t, i) => (
+              <button
+                key={t.name}
+                onClick={() => onPick(t)}
+                className="text-left rounded-[14px] px-3.5 py-3 card-hover pressable glass motion-rise"
+                style={{ animationDelay: `${220 + i * 35}ms` }}
+              >
+                <div className="text-[18px] mb-1.5">{ICONS[t.name] ?? '🤖'}</div>
+                <div className="text-[12.5px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{t.name}</div>
+                <div className="text-[11px] mt-0.5 line-clamp-2 leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>{t.job}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function TrafficLights(): React.JSX.Element {
+  return (
+    <div className="window-no-drag flex items-center gap-[7px] pr-1">
+      <button aria-label="Close" onClick={() => api.windowClose()} className="w-3 h-3 rounded-full bg-[#ff5f57]" />
+      <button aria-label="Minimize" onClick={() => api.windowMinimize()} className="w-3 h-3 rounded-full bg-[#febc2e]" />
+      <button aria-label="Zoom" onClick={() => api.windowMaximize()} className="w-3 h-3 rounded-full bg-[#28c840]" />
+    </div>
+  )
+}
+
+export function StreakPill({ days }: { days: number }): React.JSX.Element {
+  return (
+    <span
+      className="text-[11px] px-2.5 py-1 rounded-full font-semibold flex items-center gap-1"
+      style={{ background: 'color-mix(in srgb, var(--text-warning) 14%, transparent)', border: '0.5px solid color-mix(in srgb, var(--text-warning) 35%, transparent)' }}
+    >
+      <span>🔥</span>
+      <span className="streak-shine">{days}d</span>
+    </span>
+  )
+}
+
+/* ── Icons ─────────────────────────────────────────────────── */
 
 export function PlusIcon({ size = 16 }: { size?: number }): React.JSX.Element {
   return (
@@ -647,11 +1309,20 @@ export function SearchIcon(): React.JSX.Element {
   )
 }
 
-export function ComputerIcon(): React.JSX.Element {
+export function ActivityIcon(): React.JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <rect x="2" y="3" width="12" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M6 13h4M8 11v2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M1.5 8h3l2-4.5L8 12l2-6 1.5 2h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function RoomsIcon(): React.JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <circle cx="6" cy="6" r="2.6" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M1.8 13c.4-2 2.1-3.2 4.2-3.2S9.8 11 10.2 13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path d="M10.5 4.2a2.4 2.4 0 0 1 0 4.6M11.6 13c-.2-1.3-.8-2.3-1.7-2.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   )
 }
@@ -660,6 +1331,7 @@ export function MemoryIcon(): React.JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M8 2.5 13.5 5.5v5L8 13.5 2.5 10.5v-5L8 2.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M2.6 5.6 8 8.5l5.4-2.9M8 8.5v5" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -667,8 +1339,8 @@ export function MemoryIcon(): React.JSX.Element {
 export function RoutineIcon(): React.JSX.Element {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M12.5 8A4.5 4.5 0 1 1 8 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <path d="M8 3.5h3.2V6.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 5v3.2l2 1.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -698,19 +1370,89 @@ export function SendIcon(): React.JSX.Element {
   )
 }
 
+export function StopIcon(): React.JSX.Element {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <rect x="4.5" y="4.5" width="7" height="7" rx="1.4" fill="currentColor" />
+    </svg>
+  )
+}
+
 export function BellIcon(): React.JSX.Element {
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M8 2.5a3.5 3.5 0 0 1 3.5 3.5c0 2.4.7 3.4 1.2 4H3.3c.5-.6 1.2-1.6 1.2-4A3.5 3.5 0 0 1 8 2.5Z" stroke="currentColor" strokeWidth="1.4" />
       <path d="M6.5 13.2a1.6 1.6 0 0 0 3 0" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   )
 }
 
-export function StreakPill({ days }: { days: number }): React.JSX.Element {
+export function PanelIcon(): React.JSX.Element {
   return (
-    <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: 'var(--bg-active)', color: 'var(--text-warning)' }}>
-      {days} day streak
-    </span>
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <rect x="2" y="3" width="12" height="10" rx="1.6" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M10 3v10" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  )
+}
+
+export function ToolIcon(): React.JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M10.4 2.6a3.2 3.2 0 0 0-3.9 4L2.6 10.5a1.4 1.4 0 0 0 2 2l3.9-3.9a3.2 3.2 0 0 0 4-3.9L10.7 6.5 9.5 5.3l1.8-1.8-.9-.9Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function FileIcon(): React.JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M4 2h5l3 3v9H4V2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M9 2v3h3" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function ShellIcon(): React.JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <rect x="2" y="3" width="12" height="10" rx="1.6" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M5 7l1.8 1.6L5 10.2M8.5 10.4h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function NoteIcon(): React.JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M3 3h10v7l-3 3H3V3Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M10 13v-3h3M5.5 6.5h5M5.5 9h3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function HandoffIcon(): React.JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M2.5 8h9M8.5 5l3 3-3 3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12.5" cy="8" r="2" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
+  )
+}
+
+export function CheckIcon(): React.JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function AlertIcon(): React.JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden className="shrink-0 mt-0.5">
+      <path d="M8 2.5 14 13H2L8 2.5Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path d="M8 6.5v3.2M8 11.6h.01" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
   )
 }
