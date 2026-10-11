@@ -17,6 +17,18 @@ export interface MemoryStore {
 
 const NOTE_RE = /(?:noted for next time|updated memory(?: for [^:\n]+)?)[:\s]+(.+)/gi
 
+/** Count non-overlapping occurrences of `needle` in `hay` (both already lowercased). */
+function countOccurrences(hay: string, needle: string): number {
+  if (!needle) return 0
+  let count = 0
+  let at = hay.indexOf(needle)
+  while (at !== -1) {
+    count++
+    at = hay.indexOf(needle, at + needle.length)
+  }
+  return count
+}
+
 export function extractMemoryLines(text: string): Array<{ key: string; value: string }> {
   const out: Array<{ key: string; value: string }> = []
   const seen = new Set<string>()
@@ -52,9 +64,11 @@ export function createMemoryStore(): MemoryStore {
       return row
     },
     list: (botId) =>
-      [...rows]
-        .filter((r) => !botId || !r.botId || r.botId === botId)
-        .sort((a, b) => b.updatedAt - a.updatedAt),
+      rows
+        .map((row, index) => ({ row, index }))
+        .filter((x) => !botId || !x.row.botId || x.row.botId === botId)
+        .sort((a, b) => b.row.updatedAt - a.row.updatedAt || b.index - a.index)
+        .map((x) => x.row),
     search(query, k = 5, botId) {
       const pool = this.list(botId)
       const q = query.toLowerCase().split(/\s+/).filter(Boolean)
@@ -62,7 +76,9 @@ export function createMemoryStore(): MemoryStore {
       return pool
         .map((r) => {
           const hay = `${r.key}\n${r.value}`.toLowerCase()
-          const hits = q.reduce((n, w) => n + (hay.includes(w) ? 1 : 0), 0)
+          // Rank by how often the query words actually appear, so a row that
+          // mentions a term four times outranks one that mentions it once.
+          const hits = q.reduce((n, w) => n + countOccurrences(hay, w), 0)
           return { r, hits }
         })
         .filter((x) => x.hits > 0)

@@ -25,7 +25,13 @@ interface ToolCallLog {
 }
 
 function assertInside(rel: string): { abs: string; relNorm: string } {
-  const relNorm = path.normalize(rel).replace(/^[/\\]+/, '')
+  // Tool inputs must be workspace-relative. An absolute path — POSIX `/…` or a
+  // Windows drive path — is always an escape attempt, never something to fold
+  // back inside the sandbox (which is what stripping the leading slash did).
+  if (path.isAbsolute(rel) || /^[a-zA-Z]:[\\/]/.test(rel)) {
+    throw new Error(`path escapes workspace/ (blocked): ${rel}`)
+  }
+  const relNorm = path.normalize(rel)
   const root = path.resolve(workspaceDir())
   const abs = path.resolve(root, relNorm)
   if (abs !== root && !abs.startsWith(root + path.sep)) {

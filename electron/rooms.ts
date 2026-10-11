@@ -21,7 +21,13 @@ export function createRoomStore(): RoomStore {
   const persist = () => db.write(rows)
 
   return {
-    list: () => [...rows].sort((a, b) => b.updatedAt - a.updatedAt),
+    list: () =>
+      // Newest first; break same-millisecond ties by insertion order so two
+      // rooms created back-to-back still list most-recent-created first.
+      rows
+        .map((room, index) => ({ room, index }))
+        .sort((a, b) => b.room.updatedAt - a.room.updatedAt || b.index - a.index)
+        .map((x) => x.room),
     get: (id) => rows.find((r) => r.id === id),
     upsert(room) {
       const i = rows.findIndex((r) => r.id === room.id)
