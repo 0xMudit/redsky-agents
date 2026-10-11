@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { renderMarkdown, timeLabel } from './format'
 import type {
@@ -14,6 +14,41 @@ import type {
   Room,
   Routine,
 } from './types'
+
+/* ── Themes ────────────────────────────────────────────────── */
+
+export type ThemeName = 'coral' | 'aurora' | 'emerald' | 'amber' | 'rose' | 'ice'
+
+export const THEMES: { name: ThemeName; label: string; swatch: string }[] = [
+  { name: 'coral', label: 'Coral', swatch: '#f4513f' },
+  { name: 'aurora', label: 'Aurora', swatch: '#7c6aff' },
+  { name: 'emerald', label: 'Emerald', swatch: '#2fbf8f' },
+  { name: 'amber', label: 'Amber', swatch: '#f59e2c' },
+  { name: 'rose', label: 'Rose', swatch: '#ff5c8a' },
+  { name: 'ice', label: 'Ice', swatch: '#35c7e0' },
+]
+
+const THEME_KEY = 'redsky.theme'
+
+export function getStoredTheme(): ThemeName {
+  try {
+    const raw = localStorage.getItem(THEME_KEY) as ThemeName | null
+    if (raw && THEMES.some((t) => t.name === raw)) return raw
+  } catch {
+    /* ignore */
+  }
+  return 'coral'
+}
+
+export function applyTheme(name: ThemeName): void {
+  try {
+    if (name === 'coral') document.documentElement.removeAttribute('data-theme')
+    else document.documentElement.dataset.theme = name
+    localStorage.setItem(THEME_KEY, name)
+  } catch {
+    /* ignore */
+  }
+}
 
 /* ── Brand ─────────────────────────────────────────────────── */
 
@@ -158,8 +193,143 @@ export function PanelHeader({
   )
 }
 
-/* ── Conversation ──────────────────────────────────────────── */
+/* ── Command palette ───────────────────────────────────────── */
 
+export interface Command {
+  id: string
+  group: string
+  label: string
+  hint?: string
+  keywords?: string
+  icon?: React.ReactNode
+  run: () => void
+}
+
+export function CommandPalette({
+  open,
+  onClose,
+  commands,
+}: {
+  open: boolean
+  onClose: () => void
+  commands: Command[]
+}): React.JSX.Element | null {
+  const [q, setQ] = useState('')
+  const [active, setActive] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  const filtered = useMemo(() => {
+    const query = q.trim().toLowerCase()
+    if (!query) return commands
+    return commands.filter((c) => `${c.label} ${c.group} ${c.keywords ?? ''}`.toLowerCase().includes(query))
+  }, [commands, q])
+
+  useEffect(() => {
+    if (open) {
+      setQ('')
+      setActive(0)
+      requestAnimationFrame(() => inputRef.current?.focus())
+    }
+  }, [open])
+
+  useEffect(() => {
+    setActive(0)
+  }, [q])
+
+  useEffect(() => {
+    if (!open) return
+    listRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [active, open, filtered])
+
+  if (!open) return null
+
+  const grouped = filtered.reduce<Record<string, Command[]>>((acc, c) => {
+    ;(acc[c.group] ??= []).push(c)
+    return acc
+  }, {})
+
+  const onKey = (e: React.KeyboardEvent): void => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActive((a) => Math.min(a + 1, filtered.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActive((a) => Math.max(a - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      filtered[active]?.run()
+      onClose()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+    }
+  }
+
+  let idx = -1
+  return (
+    <div className="cmdk-overlay" onMouseDown={onClose}>
+      <div className="cmdk-panel" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-label="Command palette">
+        <div className="cmdk-input-row">
+          <span style={{ color: 'var(--text-accent)' }}>
+            <CommandIcon />
+          </span>
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={onKey}
+            placeholder="Search agents, panels, actions…"
+            className="cmdk-input"
+          />
+          <span className="cmdk-kbd">esc</span>
+        </div>
+        <div className="cmdk-list" ref={listRef}>
+          {Object.entries(grouped).map(([group, items]) => (
+            <div key={group}>
+              <div className="cmdk-group-label">{group}</div>
+              {items.map((c) => {
+                idx += 1
+                const i = idx
+                return (
+                  <button
+                    key={c.id}
+                    data-active={i === active}
+                    onMouseMove={() => setActive(i)}
+                    onClick={() => {
+                      c.run()
+                      onClose()
+                    }}
+                    className="cmdk-item"
+                  >
+                    <span className="cmdk-ic">{c.icon ?? <SparkIcon />}</span>
+                    <span className="cmdk-label">{c.label}</span>
+                    {c.hint ? <span className="cmdk-hint">{c.hint}</span> : null}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
+          {!filtered.length && <div className="cmdk-empty">No matches for “{q}”.</div>}
+        </div>
+        <div className="cmdk-foot">
+          <span>
+            <span className="cmdk-kbd">↑</span>
+            <span className="cmdk-kbd">↓</span>navigate
+          </span>
+          <span>
+            <span className="cmdk-kbd">↵</span>select
+          </span>
+          <span>
+            <span className="cmdk-kbd">esc</span>close
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── Conversation ──────────────────────────────────────────── */
 export function MessageBlock({
   role,
   text,
@@ -196,6 +366,20 @@ export function MessageBlock({
   onBranch?: () => void
 }): React.JSX.Element {
   const html = useMemo(() => renderMarkdown(text), [text])
+  const onMarkdownClick = (e: React.MouseEvent<HTMLDivElement>): void => {
+    const btn = (e.target as HTMLElement).closest('.code-copy') as HTMLElement | null
+    if (!btn) return
+    const code = btn.closest('.code-wrap')?.querySelector('code')
+    if (!code) return
+    void navigator.clipboard.writeText(code.textContent ?? '')
+    const prev = btn.textContent
+    btn.textContent = 'Copied'
+    btn.classList.add('copied')
+    window.setTimeout(() => {
+      btn.textContent = prev
+      btn.classList.remove('copied')
+    }, 1200)
+  }
   const actions = (
     <div className="msg-actions flex gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
       {onCopy && (
@@ -280,6 +464,8 @@ export function MessageBlock({
         <div
           className="markdown-body text-[14px] leading-[22px] max-w-[84%] rounded-2xl rounded-tl-md px-4 py-3 glass"
           title={name}
+          onClick={onMarkdownClick}
+          style={streaming ? { borderColor: 'color-mix(in srgb, var(--accent) 30%, transparent)', boxShadow: '0 0 24px -12px var(--accent-glow)' } : undefined}
         >
           <div dangerouslySetInnerHTML={{ __html: html }} />
           {streaming ? <span className="stream-caret" /> : null}
@@ -346,12 +532,18 @@ function eventTint(kind: ComputerEvent['kind']): string {
 }
 
 export function ComputerEventCard({ ev }: { ev: ComputerEvent }): React.JSX.Element {
+  const tint = eventTint(ev.kind)
   return (
-    <div className="flex gap-2.5 rounded-xl px-3 py-2 activity-in card-hover" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
-      <span className="mt-0.5 shrink-0" style={{ color: eventTint(ev.kind) }}>
-        {eventIcon(ev.kind)}
+    <div className="ev-row activity-in">
+      <span className="ev-rail">
+        <span className="ev-node" style={{ color: tint }}>
+          {eventIcon(ev.kind)}
+        </span>
       </span>
-      <div className="min-w-0 flex-1">
+      <div
+        className="min-w-0 flex-1 rounded-xl px-3 py-2 card-hover"
+        style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}
+      >
         <div className="flex items-baseline justify-between gap-2">
           <span className="text-[12.5px] font-medium truncate">{ev.title}</span>
           <span className="text-[10px] shrink-0" style={{ color: 'var(--text-tertiary)' }}>
@@ -401,19 +593,28 @@ export function RunResultCard({
   const artifacts = bot.artifacts ?? []
   const hasDiff = Boolean(diff && (diff.added.length || diff.changed.length || diff.removed.length))
   if (!hasDiff && !artifacts.length) return null
+  const chips: { label: string; n: number; tone: string }[] = [
+    { label: 'added', n: diff?.added.length ?? 0, tone: 'var(--text-success)' },
+    { label: 'changed', n: diff?.changed.length ?? 0, tone: 'var(--text-warning)' },
+    { label: 'removed', n: diff?.removed.length ?? 0, tone: 'var(--text-danger)' },
+  ].filter((c) => c.n > 0)
   return (
-    <div className="rounded-2xl p-3.5 result-pop card-hover" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
+    <div className="relative overflow-hidden rounded-2xl p-3.5 result-pop lift" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border-strong)' }}>
+      <span className="absolute inset-x-0 top-0 h-px" style={{ background: 'linear-gradient(90deg, transparent, var(--text-success), transparent)' }} />
+      <span className="complete-burst" />
       <div className="flex items-center gap-2">
-        <span style={{ color: 'var(--text-success)' }}>
+        <span className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: 'color-mix(in srgb, var(--text-success) 16%, transparent)', color: 'var(--text-success)' }}>
           <CheckIcon />
         </span>
         <span className="text-[12.5px] font-semibold">Result</span>
-        {hasDiff ? (
-          <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
-            {diff!.added.length} added · {diff!.changed.length} changed · {diff!.removed.length} removed
-          </span>
-        ) : null}
-        <button onClick={onOpenActivity} className="ml-auto text-[10.5px]" style={{ color: 'var(--text-accent)' }}>
+        <div className="flex items-center gap-1.5 ml-1">
+          {chips.map((c) => (
+            <span key={c.label} className="text-[10.5px] px-1.5 py-0.5 rounded-full tabular-nums" style={{ background: 'color-mix(in srgb, ' + c.tone + ' 14%, transparent)', color: c.tone }}>
+              {c.n} {c.label}
+            </span>
+          ))}
+        </div>
+        <button onClick={onOpenActivity} className="ml-auto text-[10.5px] hover:underline" style={{ color: 'var(--text-accent)' }}>
           View activity
         </button>
       </div>
@@ -573,7 +774,7 @@ export function ActivityPanel({
 
         <section>
           <SectionLabel>Timeline</SectionLabel>
-          <div className="space-y-1.5">
+          <div className="ev-list space-y-1.5">
             {events.map((c) => (
               <ComputerEventCard key={c.id} ev={c} />
             ))}
@@ -1062,11 +1263,15 @@ export function ConnectorsPanel({
 
 export function SettingsPanel({
   settings,
+  theme,
   onChange,
+  onTheme,
   onClose,
 }: {
   settings: AppSettings
+  theme: ThemeName
   onChange: (s: AppSettings) => void
+  onTheme: (t: ThemeName) => void
   onClose?: () => void
 }): React.JSX.Element {
   const setReview = async (autoReview: ReviewMode) => onChange(await api.updateSettings({ autoReview }))
@@ -1085,6 +1290,22 @@ export function SettingsPanel({
     <>
       <PanelHeader title="Settings" onClose={onClose} />
       <div className="p-4 space-y-5 text-[12.5px]">
+        <div>
+          <div className="mb-2 font-medium">Accent</div>
+          <div className="flex items-center gap-2.5">
+            {THEMES.map((t) => (
+              <button
+                key={t.name}
+                title={t.label}
+                aria-label={`${t.label} theme`}
+                onClick={() => onTheme(t.name)}
+                data-on={theme === t.name}
+                className="theme-swatch"
+                style={{ background: `linear-gradient(135deg, ${t.swatch}, color-mix(in srgb, ${t.swatch} 60%, #000))` }}
+              />
+            ))}
+          </div>
+        </div>
         <label className="flex items-center justify-between gap-3">
           <span className="flex-1">
             Privacy mode
@@ -1148,11 +1369,13 @@ export function BotRow({
   bot,
   active,
   unread,
+  index,
   onSelect,
 }: {
   bot: Bot
   active: boolean
   unread?: boolean
+  index?: number
   onSelect: () => void
 }): React.JSX.Element {
   const archived = Boolean(bot.archived)
@@ -1162,8 +1385,8 @@ export function BotRow({
     <button
       onClick={onSelect}
       title={archived ? `${bot.name} · archived` : bot.name}
-      className={`w-full text-left rounded-[12px] px-2.5 py-2.5 mb-1 flex items-center gap-3 pressable transition-all ${active ? 'bot-row-active' : 'hover:bg-[var(--sidebar-hover)]'}`}
-      style={{ opacity: archived ? 0.5 : 1 }}
+      className={`w-full text-left rounded-[12px] px-2.5 py-2.5 mb-1 flex items-center gap-3 pressable transition-all motion-rise ${active ? 'bot-row-active' : 'hover:bg-[var(--sidebar-hover)]'}`}
+      style={{ opacity: archived ? 0.5 : 1, animationDelay: `${Math.min(index ?? 0, 12) * 28}ms` }}
     >
       <span className="relative shrink-0">
         <BlobAvatar hue={bot.hue} size={34} />
@@ -1197,15 +1420,51 @@ export function BotRow({
   )
 }
 
+const HERO_LINES = [
+  'books the offsite venue while you sleep.',
+  'triages the bug before standup.',
+  'drafts your outbound overnight.',
+  'reconciles spend every Monday.',
+  'reproduces the flaky test on its own.',
+]
+
+function useTypewriter(phrases: string[], speed = 42, hold = 1700): string {
+  const [text, setText] = useState('')
+  const [i, setI] = useState(0)
+  const [deleting, setDeleting] = useState(false)
+  useEffect(() => {
+    const full = phrases[i % phrases.length]
+    if (!deleting && text === full) {
+      const t = window.setTimeout(() => setDeleting(true), hold)
+      return () => window.clearTimeout(t)
+    }
+    if (deleting && text === '') {
+      setDeleting(false)
+      setI((v) => v + 1)
+      return
+    }
+    const t = window.setTimeout(() => {
+      setText(deleting ? full.slice(0, text.length - 1) : full.slice(0, text.length + 1))
+    }, deleting ? speed / 2 : speed)
+    return () => window.clearTimeout(t)
+  }, [text, deleting, i, phrases, speed, hold])
+  return text
+}
+
 export function EmptyState({
   templates,
+  bots,
   onPick,
   onNew,
+  onOpen,
 }: {
   templates: JobTemplate[]
+  bots: Bot[]
   onPick: (t: JobTemplate) => void
   onNew: () => void
+  onOpen: (id: string) => void
 }): React.JSX.Element {
+  const typed = useTypewriter(HERO_LINES)
   const ICONS: Record<string, string> = {
     'Sales Outbound': '📤',
     'Talent Scout': '🔍',
@@ -1216,13 +1475,38 @@ export function EmptyState({
     'Account Health': '💼',
     'Chief of Staff': '🎯',
   }
+  const firstRun = bots.length === 0
   return (
-    <div className="h-full min-h-[400px] flex flex-col items-center justify-center text-center px-8 py-10 motion-fade-up select-none">
-      {/* hero */}
+    <div className="h-full min-h-[420px] flex flex-col items-center justify-center text-center px-8 py-10 motion-fade-up select-none">
+      {bots.length > 0 && (
+        <div className="mb-9 w-full max-w-md motion-rise">
+          <p className="text-[10.5px] uppercase tracking-widest mb-3" style={{ color: 'var(--text-tertiary)' }}>
+            Your team
+          </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {bots.slice(0, 8).map((b, i) => (
+              <button
+                key={b.id}
+                onClick={() => onOpen(b.id)}
+                title={b.job || b.name}
+                className="flex items-center gap-2 rounded-full pl-1 pr-3 py-1 lift pressable motion-pop"
+                style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)', animationDelay: `${i * 40}ms` }}
+              >
+                <BlobAvatar hue={b.hue} size={22} />
+                <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+                  {b.name}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="motion-scale" style={{ animationDelay: '60ms' }}>
-        <div className="relative inline-flex">
+        <div className="relative inline-flex presence-orbit">
+          <span className="orbit-ring" />
           <div className="absolute inset-0 rounded-full blur-2xl opacity-40" style={{ background: 'radial-gradient(circle, var(--accent) 0%, transparent 70%)' }} />
-          <Logo size={48} />
+          <Logo size={52} />
         </div>
       </div>
 
@@ -1230,19 +1514,20 @@ export function EmptyState({
         Your AI team,{' '}
         <span className="logo-word">on your machine</span>
       </h2>
-      <p className="mt-3 text-[15px] max-w-sm leading-relaxed motion-rise" style={{ color: 'var(--text-secondary)', animationDelay: '120ms' }}>
-        Spin up a bot, give it a job, watch it work. Comes back when it needs a human.
+      <p className="mt-3 min-h-[24px] text-[15px] max-w-md leading-relaxed motion-rise" style={{ color: 'var(--text-secondary)', animationDelay: '120ms' }}>
+        <span className="type-caret">{typed}</span>
       </p>
 
-      <button
-        onClick={onNew}
-        className="mt-7 rounded-full text-[14px] font-semibold px-6 py-3 btn-sheen pressable motion-scale glow-accent"
-        style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)', animationDelay: '160ms' }}
-      >
-        + New agent
-      </button>
+      <div className="motion-scale" style={{ animationDelay: '160ms' }}>
+        <button
+          onClick={onNew}
+          className={`mt-7 rounded-full text-[14px] font-semibold px-6 py-3 btn-sheen pressable glow-accent${firstRun ? ' spotlight' : ''}`}
+          style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}
+        >
+          + New agent
+        </button>
+      </div>
 
-      {/* template grid */}
       {templates.length > 0 && (
         <div className="mt-10 w-full max-w-xl motion-rise" style={{ animationDelay: '200ms' }}>
           <p className="text-[11px] uppercase tracking-widest mb-4" style={{ color: 'var(--text-tertiary)' }}>
@@ -1253,12 +1538,16 @@ export function EmptyState({
               <button
                 key={t.name}
                 onClick={() => onPick(t)}
-                className="text-left rounded-[14px] px-3.5 py-3 card-hover pressable glass motion-rise"
+                className="group text-left rounded-[14px] px-3.5 py-3 lift pressable glass motion-rise"
                 style={{ animationDelay: `${220 + i * 35}ms` }}
               >
-                <div className="text-[18px] mb-1.5">{ICONS[t.name] ?? '🤖'}</div>
-                <div className="text-[12.5px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{t.name}</div>
-                <div className="text-[11px] mt-0.5 line-clamp-2 leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>{t.job}</div>
+                <div className="text-[18px] mb-1.5 transition-transform duration-300 group-hover:scale-110 group-hover:-rotate-6 inline-block">{ICONS[t.name] ?? '🤖'}</div>
+                <div className="text-[12.5px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  {t.name}
+                </div>
+                <div className="text-[11px] mt-0.5 line-clamp-2 leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+                  {t.job}
+                </div>
               </button>
             ))}
           </div>
@@ -1296,6 +1585,34 @@ export function PlusIcon({ size = 16 }: { size?: number }): React.JSX.Element {
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function CommandIcon(): React.JSX.Element {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M6 6h4v4H6z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M6 6H4.3a1.8 1.8 0 1 1 1.7-1.8V6Zm4 0h1.7a1.8 1.8 0 1 0-1.7-1.8V6Zm0 4h1.7a1.8 1.8 0 1 1-1.7 1.8V10Zm-4 0H4.3A1.8 1.8 0 1 0 6 11.8V10Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function SparkIcon(): React.JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M8 1.8l1.5 4.2L13.7 7.5 9.5 9 8 13.2 6.5 9 2.3 7.5 6.5 6 8 1.8Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function PaletteIcon(): React.JSX.Element {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M8 2a6 6 0 0 0 0 12c1 0 1.6-.8 1.4-1.6-.2-.9.4-1.4 1.2-1.4H12A2 2 0 0 0 14 9 6 6 0 0 0 8 2Z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <circle cx="5.2" cy="7" r="0.9" fill="currentColor" />
+      <circle cx="8" cy="5.2" r="0.9" fill="currentColor" />
+      <circle cx="10.8" cy="7" r="0.9" fill="currentColor" />
     </svg>
   )
 }

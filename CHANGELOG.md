@@ -17,8 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Beta feedback button in the header that opens a prefilled GitHub issue, including app version, platform,
   setup status, and a redacted tail of the run log.
 - Test harness on Node's built-in test runner (`npm test`), with esbuild bundling and an Electron double so
-  main-process modules run under plain `node --test`. Suites cover the Auto Review gate, reminder parsing, and
-  the scheduler — including routine firing, disk rehydration, and reminder dedupe.
+  main-process modules run under plain `node --test`. Suites cover the JSON stores, the agent/OpenCode layer
+  against a fake `/session` + `/event` server, the workspace helpers, the shell sandbox, the scheduler
+  (including routine firing, disk rehydration, and reminder dedupe), and the browser `demoApi` fallback.
 - Pinned and archived agents, exposed through the agent editor: pinned agents sort first, archived ones dim
   and sink to the bottom.
 - Thread branching — any finished result can fork a new agent that takes another run at the same ask, carrying
@@ -32,6 +33,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   [configuration reference](docs/CONFIGURATION.md), and [development guide](docs/DEVELOPMENT.md).
 - Screenshots covering the dashboard, agent creation and editing, chat actions, navigation, the notification
   bar, and a run in flight.
+- **Command palette** (`Cmd/Ctrl+K`) — one search box over actions, panels, agents, templates, quick replies,
+  and accent themes, with arrow-key navigation, grouped results, and inline keyboard hints.
+- **Keyboard shortcuts** — `Cmd/Ctrl+N` for a new agent, `Cmd/Ctrl+B` to toggle the activity panel, and the
+  existing `J`/`↓` to jump to the next unread agent; a `Commands` button in the header advertises the palette.
+- **Accent themes** — six palettes (Coral, Aurora, Emerald, Amber, Rose, Ice) selectable from Settings or the
+  command palette and remembered in `localStorage`, applied without reloading.
+- Syntax-highlighted fenced code in replies, wrapped with a language label and a one-click **Copy** button.
+- Richer run activity: tool calls render as a connected timeline, run results gain count chips and a
+  completion burst, and streamed replies carry a live caret.
+- Onboarding polish: a typewriter hero, the current team as one-tap chips, and template cards that lift on
+  hover, all with staggered entrance motion.
+- Browser-local persistence for the web demo: the demo adapter now keeps agents, threads, settings, rooms,
+  and connectors in `localStorage` (versioned key `redsky.demo.v1`, debounced writes, corrupt-safe), so a
+  reload picks up where you left off; a bot caught mid-run rehydrates to idle.
 
 ### Changed
 
@@ -39,11 +54,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   locations, scripts, troubleshooting, and roadmap.
 - Product name standardized on "Red Sky"; logo and screenshots moved under `docs/`.
 - CI now runs `npm test` alongside typecheck and build on all three platforms.
+- Interface widened with motion and depth: animated message blocks, a spotlit primary action, a post-run
+  observation orbit, and softer shadows throughout.
 
 ### Fixed
 
+- Web demo didn't re-render sent prompts or replies: the demo adapter mutated bot/room/connector objects
+  in place, so React saw unchanged references and memoized selectors never recomputed. It now swaps in fresh
+  objects on every change, matching the live bridge's clone-per-event behaviour.
 - `nextDelayMs` rejected the plural hour unit, so `every 4 hrs` was refused while `every 4 hr` worked. The
   plural is now accepted, matching the minute units.
+- Run diffs listed the whole workspace instead of only the files a run touched: the pre-run snapshot was
+  never captured, so the baseline was always empty. The snapshot is now taken when a run starts, and a
+  regression test asserts that pre-existing files are not reported as added.
+- The destructive-command filter's `expand-archive` pattern was malformed and could never match. The filter
+  now covers `rm -rf` aimed at a root/home/wildcard target, format/partition tools, drive-root deletes,
+  raw-device writes, and fork bombs.
 
 ### Removed
 

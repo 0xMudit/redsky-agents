@@ -178,9 +178,11 @@ workspace — not the approval card — as the security boundary.
 
 These are honest gaps, tracked on the [roadmap](../README.md#roadmap):
 
-- **Thin test coverage.** `npm test` covers the Auto Review gate, reminder parsing, and the scheduler. The
-  stores, the IPC boundary, the agent/OpenCode layer, and the renderer are still untested — a fake
-  `/session` + `/event` server is the missing piece for the middle of that list.
+- **Test coverage.** `npm test` runs on Node's built-in runner and covers the Auto Review gate, reminder
+  parsing, the scheduler, every JSON store (bots, rooms, memory, notices, settings, connectors), the workspace
+  helpers (snapshot/diff/search), the shell sandbox and destructive-command filter, the beta setup/feedback
+  helpers, the browser `demoApi` fallback, and the agent/OpenCode layer against a fake `/session` + `/event`
+  server. UI-level (component) tests and the live IPC boundary are still open.
 - **No renderer dev server.** `npm run dev` is a full rebuild; the main process loads a built file, not a Vite
   dev URL.
 - **Connectors are a status board.** `connectors.json` records intent and feeds the system prompt; there is no

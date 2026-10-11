@@ -233,9 +233,9 @@ More in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and the [issue tracker](https
 - Real connector implementations behind the status board — the board tracks intent, not OAuth yet.
 - Browser automation via a persistent Playwright profile (`electron/browser.ts` is a stub).
 - Downloadable installers with code signing for each platform.
-- Broader test coverage. The harness today covers Auto Review, reminder parsing, and scheduling; the stores,
-  the IPC boundary, the agent/OpenCode layer, and the renderer still need suites. A fake `/session` + `/event`
-  server is what unblocks the middle of that list.
+- Broader test coverage. The harness covers the JSON stores, the agent/OpenCode layer (against a fake
+  `/session` + `/event` server), the workspace helpers, the shell sandbox, and the scheduler; UI-level
+  (component) tests and the live IPC boundary are still open.
 - Drag-and-drop file import into the workspace (`importDroppedFiles` exists with no UI), and a DevTools toggle
   for the frameless window. See [Known limitations](docs/ARCHITECTURE.md#known-limitations).
 

@@ -82,6 +82,8 @@ describe('tools.runShell — dangerous command filter', () => {
     'format c:',
     'diskpart',
     'rd /s /q c:\\',
+    ':(){ :|:& };:',
+    'dd if=/dev/zero of=/dev/sda',
   ]
 
   for (const cmd of BLOCKED) {
@@ -92,6 +94,13 @@ describe('tools.runShell — dangerous command filter', () => {
       assert.match(result.error ?? '', /blocked/)
     })
   }
+
+  it('allows a scoped delete inside the workspace (rm -rf ./build)', async () => {
+    useTempHome()
+    const result = await runShell('rm -rf ./build')
+    // The command itself runs but must NOT be refused by the safety filter.
+    assert.doesNotMatch(result.error ?? '', /blocked/)
+  })
 
   it('allows a safe command (echo)', async () => {
     useTempHome()

@@ -6,20 +6,25 @@ import {
   ActivityIcon,
   ActivityPanel,
   ActivitySummary,
+  applyTheme,
   ApprovalCard,
   BellIcon,
   BlobAvatar,
   BotRow,
+  CommandIcon,
+  CommandPalette,
   ConnectorsPanel,
   ComputerEventCard,
   EmptyState,
   GearIcon,
+  getStoredTheme,
   IconBtn,
   Logo,
   MemoryIcon,
   MemoryPanel,
   MessageBlock,
   NavItem,
+  PaletteIcon,
   PanelHeader,
   PlugIcon,
   PlusIcon,
@@ -32,10 +37,13 @@ import {
   SearchIcon,
   SendIcon,
   SettingsPanel,
+  SparkIcon,
   StatusDot,
   StopIcon,
+  THEMES,
   TrafficLights,
 } from './ui'
+import type { Command, ThemeName } from './ui'
 import type { AppSettings } from './types'
 
 type Boot = 'starting' | 'online' | 'offline'
@@ -129,6 +137,8 @@ export default function App(): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [streak, setStreak] = useState(loadStreak)
   const [showJump, setShowJump] = useState(false)
+  const [palette, setPalette] = useState(false)
+  const [theme, setTheme] = useState<ThemeName>(getStoredTheme)
   const threadRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
   const selectedIdRef = useRef<string | null>(null)
@@ -145,6 +155,10 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     selectedIdRef.current = selectedId
   }, [selectedId])
+
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
 
   useEffect(() => {
     void api
@@ -255,8 +269,19 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
+    const onKey = (e: KeyboardEvent): void => {
+      const mod = e.metaKey || e.ctrlKey
+      if (mod && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPalette((v) => !v)
+        return
+      }
       if ((e.target as HTMLElement | null)?.closest('input, textarea, select')) return
+      if (mod && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        setPanel((p) => (p === 'activity' ? 'none' : 'activity'))
+        return
+      }
       if (e.key === 'j' || e.key === 'ArrowDown') {
         const hit = bots.find((b) => unread[b.id])
         if (hit) openBot(hit.id)
@@ -316,6 +341,16 @@ export default function App(): React.JSX.Element {
     [upsertBot, openBot],
   )
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'n') return
+      e.preventDefault()
+      void newAgent()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [newAgent])
+
   const send = useCallback(
     async (preset?: string) => {
       const text = (preset ?? composer).trim()
@@ -363,6 +398,37 @@ export default function App(): React.JSX.Element {
     if (panel !== 'none') lastPanelRef.current = panel
   }, [panel])
   const activePanel: Exclude<Panel, 'none'> = panelOpen ? (panel as Exclude<Panel, 'none'>) : lastPanelRef.current
+
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
+  const modKey = isMac ? '⌘' : 'Ctrl'
+
+  const commands = useMemo<Command[]>(() => {
+    const list: Command[] = [
+      { id: 'new', group: 'Actions', label: 'New agent', hint: `${modKey} N`, keywords: 'create bot spawn', icon: <PlusIcon size={14} />, run: () => void newAgent() },
+      { id: 'activity', group: 'Actions', label: 'Toggle activity panel', hint: `${modKey} B`, keywords: 'events log run', icon: <ActivityIcon />, run: () => openPanel('activity') },
+      { id: 'settings', group: 'Actions', label: 'Open settings', keywords: 'preferences config accent', icon: <GearIcon />, run: () => openPanel('settings') },
+      { id: 'rooms', group: 'Actions', label: 'Open rooms', keywords: 'multi agent', icon: <RoomsIcon />, run: () => openPanel('rooms') },
+      { id: 'routines', group: 'Actions', label: 'Open schedules', keywords: 'routine cron recurring', icon: <RoutineIcon />, run: () => openPanel('routines') },
+      { id: 'memory', group: 'Actions', label: 'Open memory', keywords: 'notes context', icon: <MemoryIcon />, run: () => openPanel('memory') },
+      { id: 'connectors', group: 'Actions', label: 'Open connectors', keywords: 'integrations tools', icon: <PlugIcon />, run: () => openPanel('connectors') },
+    ]
+    if (selected) {
+      list.push({ id: 'focus', group: 'Current agent', label: `Open ${selected.name}`, keywords: selected.job, icon: <BlobAvatar hue={selected.hue} size={16} />, run: () => openBot(selected.id) })
+      QUICK.forEach((q, i) =>
+        list.push({ id: `quick-${i}`, group: 'Current agent', label: q.label, hint: 'send', keywords: q.text, icon: <SendIcon />, run: () => void send(q.text) }),
+      )
+    }
+    visible.forEach((b) =>
+      list.push({ id: `bot-${b.id}`, group: 'Agents', label: b.name, keywords: `${b.job} ${b.preview ?? ''}`, icon: <BlobAvatar hue={b.hue} size={16} />, run: () => openBot(b.id) }),
+    )
+    templates.forEach((t) =>
+      list.push({ id: `tpl-${t.name}`, group: 'Templates', label: t.name, keywords: t.job, icon: <SparkIcon />, run: () => void newAgent(t) }),
+    )
+    THEMES.forEach((t) =>
+      list.push({ id: `theme-${t.name}`, group: 'Accent', label: `${t.label}`, hint: theme === t.name ? 'active' : undefined, keywords: 'theme color palette vibe', icon: <PaletteIcon />, run: () => setTheme(t.name) }),
+    )
+    return list
+  }, [modKey, newAgent, openPanel, selected, openBot, send, visible, templates, theme])
 
   // ── First-run blocking screen ──────────────────────────────────────────────
   const cliMissing = boot === 'offline' && detail === 'opencode-missing'
@@ -464,8 +530,8 @@ export default function App(): React.JSX.Element {
         )}
 
         <nav className="flex-1 overflow-y-auto px-2 pb-2">
-          {visible.map((b) => (
-            <BotRow key={b.id} bot={b} active={b.id === selected?.id} unread={Boolean(unread[b.id])} onSelect={() => openBot(b.id)} />
+          {visible.map((b, i) => (
+            <BotRow key={b.id} bot={b} index={i} active={b.id === selected?.id} unread={Boolean(unread[b.id])} onSelect={() => openBot(b.id)} />
           ))}
           {!bots.length && (
             <p className="px-3 py-6 text-[12px] leading-relaxed" style={{ color: 'var(--sidebar-faint)' }}>
@@ -536,6 +602,16 @@ export default function App(): React.JSX.Element {
             </span>
           )}
           <div className="window-no-drag ml-auto flex items-center gap-1.5">
+            <button
+              onClick={() => setPalette(true)}
+              className="window-no-drag flex items-center gap-1.5 text-[11.5px] pl-2.5 pr-1.5 py-1.5 rounded-lg hover:bg-[var(--bg-hover)] pressable"
+              style={{ color: 'var(--text-secondary)', border: '0.5px solid var(--border)' }}
+              title="Command palette"
+            >
+              <CommandIcon />
+              <span className="hidden lg:inline">Commands</span>
+              <span className="cmdk-kbd">{modKey} K</span>
+            </button>
             <select
               value={model}
               onChange={(e) => setModel(e.target.value)}
@@ -642,9 +718,11 @@ export default function App(): React.JSX.Element {
 
                   {selected.status === 'running' && (
                     <>
-                      {selected.computer.slice(-5).map((c) => (
-                        <ComputerEventCard key={c.id} ev={c} />
-                      ))}
+                      <div className="ev-list space-y-1.5">
+                        {selected.computer.slice(-5).map((c) => (
+                          <ComputerEventCard key={c.id} ev={c} />
+                        ))}
+                      </div>
                       <RunningDots hue={selected.hue} label={selected.activity} />
                     </>
                   )}
@@ -680,7 +758,7 @@ export default function App(): React.JSX.Element {
                   <div className="h-2" />
                 </div>
               ) : (
-                <EmptyState templates={templates} onPick={(t) => void newAgent(t)} onNew={() => void newAgent()} />
+                <EmptyState templates={templates} bots={bots} onOpen={openBot} onPick={(t) => void newAgent(t)} onNew={() => void newAgent()} />
               )}
             </div>
 
@@ -891,7 +969,7 @@ export default function App(): React.JSX.Element {
               {activePanel === 'memory' && <MemoryPanel memories={memories} botId={selected?.id} onChange={setMemories} onClose={() => setPanel('none')} />}
               {activePanel === 'routines' && <RoutinePanel routines={routines} bots={bots} selectedId={selected?.id} onChange={setRoutines} onClose={() => setPanel('none')} />}
               {activePanel === 'connectors' && <ConnectorsPanel connectors={connectors} onChange={setConnectors} onClose={() => setPanel('none')} />}
-              {activePanel === 'settings' && settings && <SettingsPanel settings={settings} onChange={setSettings} onClose={() => setPanel('none')} />}
+              {activePanel === 'settings' && settings && <SettingsPanel settings={settings} theme={theme} onChange={setSettings} onTheme={setTheme} onClose={() => setPanel('none')} />}
             </div>
           </aside>
         </div>
@@ -970,6 +1048,8 @@ export default function App(): React.JSX.Element {
           </div>
         </div>
       )}
+
+      <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} />
     </div>
   )
 }

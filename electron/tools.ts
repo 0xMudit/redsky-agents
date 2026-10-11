@@ -66,12 +66,21 @@ export async function writeFile(rel: string, content: string): Promise<ToolResul
   }
 }
 
-const DANGEROUS = [
-  /\brm\s+-rf\s+\/?\s*(?:\/|\\|$)/i,
-  /\bexpand-archive\b.*(?:c:\\|c:\\\\|a:\\).*\{x-risky/i,
-  /^\s*(format|diskpart)\b/i,
-  /\b(format|diskpart)\b/i,
-  /\brd\s+\/s\s+\/?\s*q?.*(?:[a-z]:\\|\/)(?:\s)*(?:\/|\\|$)/i,
+const DANGEROUS: RegExp[] = [
+  // rm -rf aimed at a root, home, or whole-tree target
+  /\brm\s+-[a-z]*r[a-z]*f[a-z]*\s+(\/|~|\$HOME|\*)/i,
+  // disk formatting / partitioning tools
+  /^\s*(format|diskpart|fdisk|mkfs)(\.\w+)?\b/i,
+  /\bformat\s+[a-z]:/i,
+  // recursive forced directory removal on a drive root
+  /\b(rd|rmdir)\s+\/s(\s+\/q)?\s+[a-z]:[\\/]?\s*$/i,
+  // recursive delete on a drive root
+  /\bdel\s+\/[a-z]*[sq][a-z]*\s+[a-z]:[\\/]/i,
+  // overwrite a raw disk device
+  /\bdd\b[^\n]*\bof=\/dev\//i,
+  />\s*\/dev\/(sd|nvme|disk|hd)/i,
+  // classic bash fork bomb
+  /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
 ]
 
 export function runShell(command: string, opts?: { timeoutMs?: number }): Promise<ToolResult> {

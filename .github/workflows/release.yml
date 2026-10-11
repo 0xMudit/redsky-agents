@@ -53,15 +53,19 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
-      # sharp has native binaries — approve its install script on CI
-      - name: Approve install scripts
-        run: npm approve-scripts sharp
+      # sharp ships native binaries. npm 10 (Node 20/22) runs install scripts by
+      # default; npm 11+ blocks them unless approved, which package.json's
+      # `allowScripts` already grants for sharp. Only run approve-scripts when
+      # this npm actually has the command, so older/newer npm never breaks it.
+      - name: Approve install scripts (npm 11+)
+        shell: bash
+        run: npm approve-scripts sharp || true
 
       - name: Generate icons
         run: npm run build:icons

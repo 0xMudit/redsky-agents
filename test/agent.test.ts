@@ -307,4 +307,22 @@ describe('agent — workspace diff on idle', () => {
     const done = await waitForBot(agent, (b) => b.id === bot.id && b.status === 'idle')
     assert.ok((done.runDiff?.added.length ?? 0) > 0)
   })
+
+  it('does not report pre-existing workspace files as added', async () => {
+    const { workspaceDir } = require('../electron/paths') as typeof import('../electron/paths')
+    const preexisting = `preexisting_${Date.now()}.txt`
+    fs.writeFileSync(`${workspaceDir()}/${preexisting}`, 'already here before the run')
+
+    const bot = await agent.createBot({ name: 'DiffBotRegress' })
+    await agent.send(bot.id, { text: 'add one file' })
+
+    const created = `run_${Date.now()}.txt`
+    fs.writeFileSync(`${workspaceDir()}/${created}`, 'written during the run')
+
+    serverEvents.emit('event', { type: 'session.idle', properties: { sessionID: bot.sessionId } })
+    const done = await waitForBot(agent, (b) => b.id === bot.id && b.status === 'idle')
+
+    assert.ok(done.runDiff?.added.includes(created), 'file created during the run should be added')
+    assert.ok(!done.runDiff?.added.includes(preexisting), 'pre-existing file must not be reported as added')
+  })
 })

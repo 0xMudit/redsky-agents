@@ -706,6 +706,9 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     bot.updatedAt = Date.now()
     botBySession.set(await ensureSession(bot), bot.id)
     partText.delete(bot.id)
+    // Capture the workspace before the run so session.idle can diff against it
+    // and report only the files this run touched.
+    snaps.set(bot.id, snapshotWorkspace())
     store.upsert(bot)
     emitBot(bot)
 

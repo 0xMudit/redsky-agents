@@ -33,6 +33,30 @@ const DEFAULT_SETTINGS: AppSettings = {
   maxParallelBots: 8,
 }
 
+/** Bumped when the persisted shape changes, so stale snapshots are discarded. */
+const STORE_VERSION = 1
+const DEFAULT_STORE_KEY = 'redsky.demo.v1'
+
+/** The slice of demo state worth keeping across reloads. */
+interface DemoSnapshot {
+  version: number
+  bots: Bot[]
+  settings: AppSettings
+  connectors: Connector[]
+  rooms: Room[]
+  notices: AppNotice[]
+}
+
+/** localStorage survives reloads but private mode forbids access; treat every call as fallible. */
+function resolveStorage(persist: boolean | undefined): Storage | null {
+  if (persist === false || typeof window === 'undefined') return null
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
 /** What a responder sees when it is asked to reply to a prompt. */
 export interface DemoRespondInput {
   bot: Bot
@@ -50,38 +74,97 @@ export type DemoResponder = (input: DemoRespondInput) => Promise<string>
 
 export interface DemoApiOptions {
   respond?: DemoResponder
+  /** Persist agents, threads, settings, rooms, and connectors to localStorage. Defaults to on in the browser. */
+  persist?: boolean
+  /** Override the localStorage key (e.g. to isolate demos). Defaults to `redsky.demo.v1`. */
+  storageKey?: string
 }
 
 export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
   const HUES = ['#54B9A6', '#F19D38', '#6464EF', '#885CF5', '#3C82F6', '#ED712E', '#EC4899', '#10B981']
   const now = Date.now()
-  let bots: Bot[] = [
-    {
-      id: 'demo_chief',
-      name: 'Chief',
-      job: TEMPLATES[7].job,
-      hue: HUES[0],
-      sessionId: 's1',
-      status: 'idle',
-      preview: 'booked the venue and sent the confirmation around.',
-      thread: [
-        { id: 'm1', role: 'user', text: 'Book the offsite venue and send the confirmation.' },
-        { id: 'm2', role: 'assistant', text: 'Booked the venue and sent the confirmation around.' },
-      ],
-      computer: [],
-      createdAt: now - 3600_000,
-      updatedAt: now - 60_000,
-    },
-  ]
-  let settings = { ...DEFAULT_SETTINGS }
-  let connectors: Connector[] = [
-    { id: 'browser', name: 'Browser', description: 'Use sites the way you would.', status: 'disconnected', updatedAt: now },
-    { id: 'slack', name: 'Slack', description: 'Search threads and draft replies.', status: 'disconnected', updatedAt: now },
-  ]
-  let rooms: Room[] = []
-  let notices: AppNotice[] = []
+  const storage = resolveStorage(opts.persist)
+  const storageKey = opts.storageKey ?? DEFAULT_STORE_KEY
+
+  const loadSnapshot = (): DemoSnapshot | null => {
+    if (!storage) return null
+    try {
+      const raw = storage.getItem(storageKey)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as DemoSnapshot
+      if (!parsed || parsed.version !== STORE_VERSION || !Array.isArray(parsed.bots)) return null
+      return parsed
+    } catch {
+      return null
+    }
+  }
+
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+  const persist = (): void => {
+    if (!storage) return
+    const snapshot: DemoSnapshot = { version: STORE_VERSION, bots, settings, connectors, rooms, notices }
+    try {
+      storage.setItem(storageKey, JSON.stringify(snapshot))
+    } catch {
+      /* quota exceeded or storage disabled — keep working in memory */
+    }
+  }
+  const scheduleSave = (): void => {
+    if (!storage) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(persist, 120)
+  }
+
+  const seeded = loadSnapshot()
+  // A bot caught mid-run or awaiting approval can't resume after a reload.
+  const rehydrate = (b: Bot): Bot =>
+    b.status === 'running' || b.pendingPermission ? { ...b, status: 'idle', pendingPermission: undefined } : b
+
+  const seedBots: Bot[] = seeded?.bots.length
+    ? seeded.bots
+    : [
+        {
+          id: 'demo_chief',
+          name: 'Chief',
+          job: TEMPLATES[7].job,
+          hue: HUES[0],
+          sessionId: 's1',
+          status: 'idle',
+          preview: 'booked the venue and sent the confirmation around.',
+          thread: [
+            { id: 'm1', role: 'user', text: 'Book the offsite venue and send the confirmation.' },
+            { id: 'm2', role: 'assistant', text: 'Booked the venue and sent the confirmation around.' },
+          ],
+          computer: [],
+          createdAt: now - 3600_000,
+          updatedAt: now - 60_000,
+        },
+      ]
+  let bots: Bot[] = seedBots.map(rehydrate)
+  let settings: AppSettings = { ...DEFAULT_SETTINGS, ...(seeded?.settings ?? {}) }
+  let connectors: Connector[] = seeded?.connectors.length
+    ? seeded.connectors
+    : [
+        { id: 'browser', name: 'Browser', description: 'Use sites the way you would.', status: 'disconnected', updatedAt: now },
+        { id: 'slack', name: 'Slack', description: 'Search threads and draft replies.', status: 'disconnected', updatedAt: now },
+      ]
+  let rooms: Room[] = seeded?.rooms ?? []
+  let notices: AppNotice[] = seeded?.notices ?? []
   const listeners = new Set<(evt: EventEnvelope) => void>()
-  const emit = (evt: EventEnvelope) => listeners.forEach((cb) => cb(evt))
+  const emit = (evt: EventEnvelope) => {
+    scheduleSave()
+    listeners.forEach((cb) => cb(evt))
+  }
+
+  // The live bridge hands the renderer freshly-cloned objects, so React sees new
+  // references on every change. This adapter must do the same: mutating in place
+  // leaves the object identity untouched and memoized selectors never re-run.
+  const patchBot = (bot: Bot, patch: Partial<Bot>): Bot => {
+    const next: Bot = { ...bot, ...patch }
+    bots = bots.map((b) => (b.id === next.id ? next : b))
+    emit({ source: 'bot', bot: next })
+    return next
+  }
   const models: ModelOption[] = [{ id: 'demo', label: 'Local', isDefault: true }]
 
   return {
@@ -122,10 +205,7 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     },
     renameBot: async (botId, payload) => {
       const bot = bots.find((b) => b.id === botId)!
-      bot.name = payload.name
-      if (payload.job !== undefined) bot.job = payload.job
-      emit({ source: 'bot', bot })
-      return bot
+      return patchBot(bot, { name: payload.name, ...(payload.job !== undefined ? { job: payload.job } : {}) })
     },
     duplicateBot: async (botId) => {
       const src = bots.find((b) => b.id === botId)!
@@ -148,11 +228,11 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     },
     setBotFlags: async (botId, flags) => {
       const bot = bots.find((b) => b.id === botId)!
-      if (flags.pinned !== undefined) bot.pinned = flags.pinned
-      if (flags.archived !== undefined) bot.archived = flags.archived
-      bot.updatedAt = Date.now()
-      emit({ source: 'bot', bot })
-      return bot
+      return patchBot(bot, {
+        ...(flags.pinned !== undefined ? { pinned: flags.pinned } : {}),
+        ...(flags.archived !== undefined ? { archived: flags.archived } : {}),
+        updatedAt: Date.now(),
+      })
     },
     branchFrom: async (botId, messageId) => {
       const src = bots.find((b) => b.id === botId)!
@@ -179,32 +259,28 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     search: async () => [],
     send: async (botId, payload) => {
       const bot = bots.find((b) => b.id === botId)!
-      bot.thread.push({ id: `m_${Date.now()}`, role: 'user', text: payload.text, at: Date.now() })
-      bot.preview = payload.text
-      bot.updatedAt = Date.now()
+      let next = patchBot(bot, {
+        thread: [...bot.thread, { id: `m_${Date.now()}`, role: 'user', text: payload.text, at: Date.now() }],
+        preview: payload.text,
+        updatedAt: Date.now(),
+      })
 
-      if (!opts.respond) {
-        emit({ source: 'bot', bot })
-        return bot
-      }
+      if (!opts.respond) return next
 
-      bot.status = 'running'
-      bot.error = undefined
-      emit({ source: 'bot', bot })
+      next = patchBot(next, { status: 'running', error: undefined })
       try {
-        const reply = await opts.respond({ bot, text: payload.text, model: payload.model, roomId: payload.roomId })
-        bot.thread.push({ id: `m_${Date.now()}_a`, role: 'assistant', text: reply, at: Date.now() })
-        bot.preview = reply
-        bot.status = 'idle'
+        const reply = await opts.respond({ bot: next, text: payload.text, model: payload.model, roomId: payload.roomId })
+        next = patchBot(next, {
+          thread: [...next.thread, { id: `m_${Date.now()}_a`, role: 'assistant', text: reply, at: Date.now() }],
+          preview: reply,
+          status: 'idle',
+          updatedAt: Date.now(),
+        })
       } catch (err) {
         const message = (err as Error).message || 'Request failed'
-        bot.status = 'error'
-        bot.error = message
-        bot.preview = message
+        next = patchBot(next, { status: 'error', error: message, preview: message, updatedAt: Date.now() })
       }
-      bot.updatedAt = Date.now()
-      emit({ source: 'bot', bot })
-      return bot
+      return next
     },
     abortBot: async () => ({ ok: true }),
     listBots: async () => bots,
@@ -215,32 +291,23 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     },
     patchMessage: async (botId, messageId, text) => {
       const bot = bots.find((b) => b.id === botId)!
-      const msg = bot.thread.find((m) => m.id === messageId)
-      if (msg) msg.text = text
-      emit({ source: 'bot', bot })
-      return bot
+      return patchBot(bot, { thread: bot.thread.map((m) => (m.id === messageId ? { ...m, text } : m)) })
     },
     deleteMessage: async (botId, messageId) => {
       const bot = bots.find((b) => b.id === botId)!
-      bot.thread = bot.thread.filter((m) => m.id !== messageId)
-      emit({ source: 'bot', bot })
-      return bot
+      return patchBot(bot, { thread: bot.thread.filter((m) => m.id !== messageId) })
     },
     clearThread: async (botId) => {
       const bot = bots.find((b) => b.id === botId)!
-      bot.thread = []
-      bot.preview = ''
-      emit({ source: 'bot', bot })
-      return bot
+      return patchBot(bot, { thread: [], preview: '' })
     },
     resendFrom: async (botId, messageId) => {
       const bot = bots.find((b) => b.id === botId)!
       const idx = bot.thread.findIndex((m) => m.id === messageId)
       const msg = bot.thread[idx]
-      bot.thread = bot.thread.slice(0, idx)
-      bot.thread.push({ id: `m_${Date.now()}`, role: 'user', text: msg?.text ?? '', at: Date.now() })
-      emit({ source: 'bot', bot })
-      return bot
+      return patchBot(bot, {
+        thread: [...bot.thread.slice(0, idx), { id: `m_${Date.now()}`, role: 'user', text: msg?.text ?? '', at: Date.now() }],
+      })
     },
     permission: async () => ({ ok: true }),
     files: async () => [],
@@ -264,17 +331,15 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     }),
     setWatchMode: async (botId, enabled) => {
       const bot = bots.find((b) => b.id === botId)!
-      bot.watchMode = enabled
-      emit({ source: 'bot', bot })
-      return bot
+      return patchBot(bot, { watchMode: enabled })
     },
     listConnectors: async () => connectors,
     updateConnector: async (payload) => {
       const row = connectors.find((c) => c.id === payload.id)!
-      row.status = payload.status as ConnectorStatus
-      row.note = payload.note
+      const next: Connector = { ...row, status: payload.status as ConnectorStatus, note: payload.note }
+      connectors = connectors.map((c) => (c.id === next.id ? next : c))
       emit({ source: 'connectors', connectors })
-      return row
+      return next
     },
     listRooms: async () => rooms,
     createRoom: async (payload) => {
@@ -292,15 +357,19 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     },
     addToRoom: async (roomId, botId) => {
       const room = rooms.find((r) => r.id === roomId)!
-      if (!room.participantIds.includes(botId)) room.participantIds.push(botId)
+      const next: Room = room.participantIds.includes(botId)
+        ? room
+        : { ...room, participantIds: [...room.participantIds, botId] }
+      rooms = rooms.map((r) => (r.id === next.id ? next : r))
       emit({ source: 'rooms', rooms })
-      return room
+      return next
     },
     renameRoom: async (roomId, title) => {
       const room = rooms.find((r) => r.id === roomId)!
-      room.title = title
+      const next: Room = { ...room, title }
+      rooms = rooms.map((r) => (r.id === next.id ? next : r))
       emit({ source: 'rooms', rooms })
-      return room
+      return next
     },
     deleteRoom: async (roomId) => {
       rooms = rooms.filter((r) => r.id !== roomId)
@@ -309,14 +378,13 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     },
     listNotices: async () => notices,
     markNoticeRead: async (id) => {
-      const n = notices.find((x) => x.id === id)
-      if (n) n.read = true
+      notices = notices.map((n) => (n.id === id ? { ...n, read: true } : n))
+      scheduleSave()
       return notices
     },
     markAllNoticesRead: async () => {
-      notices.forEach((n) => {
-        n.read = true
-      })
+      notices = notices.map((n) => ({ ...n, read: true }))
+      scheduleSave()
       return notices
     },
     clearNotices: async () => {
