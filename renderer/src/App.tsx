@@ -1,28 +1,35 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { stripThinking } from './format'
-import type { AppNotice, Bot, Connector, EventEnvelope, FileNode, JobTemplate, MemoryRow, ModelOption, Room, Routine, SearchHit, SetupCheck } from './types'
+import type { AppNotice, Bot, Connector, EventEnvelope, FileNode, HistoryTurn, JobTemplate, MemoryRow, ModelOption, Room, Routine, SearchHit, SetupCheck } from './types'
 import {
   ActivityIcon,
-  ActivityPanel,
+ActivityPanel,
   ActivitySummary,
+  applyMode,
   applyTheme,
   ApprovalCard,
   BellIcon,
   BlobAvatar,
   BotRow,
+  ChevronDownIcon,
+  ChevronUpIcon,
   CommandIcon,
   CommandPalette,
   ConnectorsPanel,
-  ComputerEventCard,
+  ContextMenu,
   EmptyState,
   GearIcon,
+  getStoredMode,
   getStoredTheme,
+  HistoryIcon,
+  HistoryPanel,
   IconBtn,
   Logo,
   MemoryIcon,
   MemoryPanel,
   MessageBlock,
+  ModeIcon,
   NavItem,
   PaletteIcon,
   PanelHeader,
@@ -32,8 +39,6 @@ import {
   RoomsPanel,
   RoutineIcon,
   RoutinePanel,
-  RunningDots,
-  RunResultCard,
   SearchIcon,
   SendIcon,
   SettingsPanel,
@@ -42,12 +47,13 @@ import {
   StopIcon,
   THEMES,
   TrafficLights,
+  WorkingWindow,
 } from './ui'
-import type { Command, ThemeName } from './ui'
+import type { Command, MenuItem, Mode, ThemeName } from './ui'
 import type { AppSettings } from './types'
 
 type Boot = 'starting' | 'online' | 'offline'
-type Panel = 'none' | 'activity' | 'notices' | 'rooms' | 'memory' | 'routines' | 'connectors' | 'settings'
+type Panel = 'none' | 'activity' | 'notices' | 'rooms' | 'memory' | 'history' | 'routines' | 'connectors' | 'settings'
 
 const STREAK_KEY = 'redsky.streak'
 const QUICK = [
@@ -123,6 +129,7 @@ export default function App(): React.JSX.Element {
   const [sending, setSending] = useState(false)
   const [panel, setPanel] = useState<Panel>('none')
   const [memories, setMemories] = useState<MemoryRow[]>([])
+  const [history, setHistory] = useState<HistoryTurn[]>([])
   const [routines, setRoutines] = useState<Routine[]>([])
   const [rooms, setRooms] = useState<Room[]>([])
   const [templates, setTemplates] = useState<JobTemplate[]>([])
@@ -139,6 +146,19 @@ export default function App(): React.JSX.Element {
   const [showJump, setShowJump] = useState(false)
   const [palette, setPalette] = useState(false)
   const [theme, setTheme] = useState<ThemeName>(getStoredTheme)
+  const [mode, setMode] = useState<Mode>(getStoredMode)
+  // Whether the Rooms/Schedules/Memory/… app tools drawer is open in the sidebar.
+  const [sectionsOpen, setSectionsOpen] = useState(() => {
+    try {
+      return localStorage.getItem('redsky.sections') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null)
   const threadRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
   const selectedIdRef = useRef<string | null>(null)
@@ -159,6 +179,10 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
+
+  useEffect(() => {
+    applyMode(mode)
+  }, [mode])
 
   useEffect(() => {
     void api
@@ -222,6 +246,10 @@ export default function App(): React.JSX.Element {
   }, [upsertBot])
 
   const selected = useMemo(() => bots.find((b) => b.id === selectedId) ?? null, [bots, selectedId])
+  const menuBot = useMemo(() => (menu ? (bots.find((b) => b.id === menu.id) ?? null) : null), [menu, bots])
+
+  const cliMissing = boot === 'offline' && detail === 'opencode-missing'
+  const setupReady = boot === 'online' && models.length > 0 && (setup?.opencode.found ?? true)
 
   const visibleThread = useMemo(() => {
     return (selected?.thread ?? []).filter((m) => {
@@ -240,8 +268,19 @@ export default function App(): React.JSX.Element {
   }, [models, model])
 
   useEffect(() => {
+    if (setupReady) return
+    const tick = (): void => {
+      void api.setupCheck().then(setSetup).catch(() => undefined)
+      void api.models().then(setModels).catch(() => undefined)
+    }
+    const timer = setInterval(tick, 3000)
+    return () => clearInterval(timer)
+  }, [setupReady])
+
+  useEffect(() => {
     if (panel === 'activity') void api.files('.').then(setFiles).catch(() => setFiles([]))
     if (panel === 'memory') void api.listMemories(selected?.id).then(setMemories)
+    if (panel === 'history') void api.listHistory().then(setHistory).catch(() => setHistory([]))
     if (panel === 'routines') void api.listRoutines().then(setRoutines)
     if (panel === 'connectors') void api.listConnectors().then(setConnectors)
     if (panel === 'rooms') void api.listRooms().then(setRooms)
@@ -270,6 +309,7 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (!setupReady) return
       const mod = e.metaKey || e.ctrlKey
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault()
@@ -289,13 +329,22 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [bots, unread, openBot])
+  }, [bots, unread, openBot, setupReady])
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
     const matched = q ? bots.filter((b) => `${b.name} ${b.job} ${b.preview}`.toLowerCase().includes(q)) : bots
     const rank = (b: Bot) => (b.archived ? 2 : 0) + (b.pinned ? 0 : 1)
-    return [...matched].sort((a, b) => rank(a) - rank(b))
+    // Within a group, honour a manual drag order when present, otherwise fall back
+    // to most-recently-updated first.
+    return [...matched].sort((a, b) => {
+      const byRank = rank(a) - rank(b)
+      if (byRank) return byRank
+      const ao = a.order ?? Number.POSITIVE_INFINITY
+      const bo = b.order ?? Number.POSITIVE_INFINITY
+      if (ao !== bo) return ao - bo
+      return b.updatedAt - a.updatedAt
+    })
   }, [bots, search])
 
   useEffect(() => {
@@ -343,18 +392,19 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (!setupReady) return
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'n') return
       e.preventDefault()
       void newAgent()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [newAgent])
+  }, [newAgent, setupReady])
 
   const send = useCallback(
     async (preset?: string) => {
       const text = (preset ?? composer).trim()
-      if (!text || sending) return
+      if (!setupReady || !text || sending) return
       setSending(true)
       stickRef.current = true
       try {
@@ -376,7 +426,7 @@ export default function App(): React.JSX.Element {
         setSending(false)
       }
     },
-    [composer, sending, selected, model, upsertBot, openBot, scrollToEnd],
+    [composer, sending, selected, model, upsertBot, openBot, scrollToEnd, setupReady],
   )
 
   const saveEditor = useCallback(async () => {
@@ -385,6 +435,101 @@ export default function App(): React.JSX.Element {
     upsertBot(next)
     setEditor(null)
   }, [selected, editor, upsertBot])
+
+  const commitRename = useCallback(
+    async (bot: Bot, name: string) => {
+      setRenamingId(null)
+      const trimmed = name.trim()
+      if (!trimmed || trimmed === bot.name) return
+      try {
+        upsertBot(await api.renameBot(bot.id, { name: trimmed }))
+      } catch (err) {
+        alert((err as Error).message)
+      }
+    },
+    [upsertBot],
+  )
+
+  // Reorder optimistically, then persist. The ids mirror the visible (grouped) order;
+  // the rank re-sort keeps pinned/archived grouping intact afterwards.
+  const moveBot = useCallback(
+    (draggedId: string, targetId: string, before: boolean) => {
+      if (!draggedId || draggedId === targetId) return
+      const ids = visible.map((b) => b.id)
+      const from = ids.indexOf(draggedId)
+      if (from < 0) return
+      ids.splice(from, 1)
+      let to = ids.indexOf(targetId)
+      if (to < 0) return
+      if (!before) to += 1
+      ids.splice(to, 0, draggedId)
+      setBots((prev) =>
+        prev.map((b) => {
+          const i = ids.indexOf(b.id)
+          return i >= 0 && b.order !== i ? { ...b, order: i } : b
+        }),
+      )
+      void api.reorderBots(ids).catch(() => undefined)
+    },
+    [visible],
+  )
+
+  const menuItemsFor = (bot: Bot): MenuItem[] => [
+    { label: 'Open', onClick: () => openBot(bot.id) },
+    {
+      label: 'Rename',
+      onClick: () => {
+        openBot(bot.id)
+        setRenamingId(bot.id)
+      },
+    },
+    {
+      label: 'Edit agent…',
+      onClick: () => {
+        openBot(bot.id)
+        setEditor({ name: bot.name, job: bot.job })
+      },
+    },
+    {
+      label: 'Duplicate',
+      onClick: () =>
+        void api.duplicateBot(bot.id).then((b) => {
+          upsertBot(b)
+          openBot(b.id)
+        }),
+    },
+    {
+      label: bot.pinned ? 'Unpin' : 'Pin to top',
+      checked: Boolean(bot.pinned),
+      separatorBefore: true,
+      onClick: () => void api.setBotFlags(bot.id, { pinned: !bot.pinned }).then(upsertBot),
+    },
+    {
+      label: bot.watchMode ? 'Stop watching' : 'Watch workspace',
+      checked: Boolean(bot.watchMode),
+      onClick: () => void api.setWatchMode(bot.id, !bot.watchMode).then(upsertBot),
+    },
+    {
+      label: bot.archived ? 'Unarchive' : 'Archive',
+      checked: Boolean(bot.archived),
+      onClick: () => void api.setBotFlags(bot.id, { archived: !bot.archived }).then(upsertBot),
+    },
+    {
+      label: 'Clear chat',
+      separatorBefore: true,
+      onClick: () => {
+        if (confirm(`Clear chat with ${bot.name}?`)) void api.clearThread(bot.id).then(upsertBot)
+      },
+    },
+    {
+      label: 'Delete agent',
+      danger: true,
+      separatorBefore: true,
+      onClick: () => {
+        if (confirm(`Delete ${bot.name}?`)) void api.deleteBot(bot.id)
+      },
+    },
+  ]
 
   const statusLabel = boot === 'online' ? 'Live' : boot === 'starting' ? 'Starting…' : 'Offline'
   const lastWasResult = selected?.status === 'idle' && visibleThread.at(-1)?.role === 'assistant'
@@ -427,11 +572,13 @@ export default function App(): React.JSX.Element {
     THEMES.forEach((t) =>
       list.push({ id: `theme-${t.name}`, group: 'Accent', label: `${t.label}`, hint: theme === t.name ? 'active' : undefined, keywords: 'theme color palette vibe', icon: <PaletteIcon />, run: () => setTheme(t.name) }),
     )
+    ;(['dark', 'light'] as Mode[]).forEach((m) =>
+      list.push({ id: `mode-${m}`, group: 'Appearance', label: `${m === 'dark' ? 'Dark' : 'Light'} mode`, hint: mode === m ? 'active' : undefined, keywords: 'theme dark light appearance mode', icon: <ModeIcon />, run: () => setMode(m) }),
+    )
     return list
-  }, [modKey, newAgent, openPanel, selected, openBot, send, visible, templates, theme])
+  }, [modKey, newAgent, openPanel, selected, openBot, send, visible, templates, theme, mode])
 
   // ── First-run blocking screen ──────────────────────────────────────────────
-  const cliMissing = boot === 'offline' && detail === 'opencode-missing'
   if (cliMissing) {
     return (
       <div className="app-shell flex h-full flex-col items-center justify-center gap-6 px-10" style={{ color: 'var(--text-primary)' }}>
@@ -515,7 +662,7 @@ export default function App(): React.JSX.Element {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search agents"
-            className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-[var(--sidebar-text)] placeholder:text-[var(--sidebar-faint)] outline-none"
+            className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-[var(--sidebar-text)] placeholder:text-[var(--sidebar-faint)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1"
           />
         </label>
 
@@ -531,7 +678,35 @@ export default function App(): React.JSX.Element {
 
         <nav className="flex-1 overflow-y-auto px-2 pb-2">
           {visible.map((b, i) => (
-            <BotRow key={b.id} bot={b} index={i} active={b.id === selected?.id} unread={Boolean(unread[b.id])} onSelect={() => openBot(b.id)} />
+            <BotRow
+              key={b.id}
+              bot={b}
+              index={i}
+              active={b.id === selected?.id}
+              unread={Boolean(unread[b.id])}
+              onSelect={() => openBot(b.id)}
+              onContextMenu={(pos) => setMenu({ id: b.id, x: pos.x, y: pos.y })}
+              onMenu={(pos) => setMenu({ id: b.id, x: pos.x, y: pos.y })}
+              renaming={renamingId === b.id}
+              onRename={(name) => void commitRename(b, name)}
+              onRenameCancel={() => setRenamingId(null)}
+              dragging={dragId === b.id}
+              dropBefore={dropTarget?.id === b.id && dropTarget.before}
+              dropAfter={dropTarget?.id === b.id && !dropTarget.before}
+              onDragStart={() => setDragId(b.id)}
+              onDragOver={(before) => {
+                if (dragId && dragId !== b.id) setDropTarget({ id: b.id, before })
+              }}
+              onDrop={() => {
+                if (dragId && dropTarget?.id === b.id) moveBot(dragId, b.id, dropTarget.before)
+                setDragId(null)
+                setDropTarget(null)
+              }}
+              onDragEnd={() => {
+                setDragId(null)
+                setDropTarget(null)
+              }}
+            />
           ))}
           {!bots.length && (
             <p className="px-3 py-6 text-[12px] leading-relaxed" style={{ color: 'var(--sidebar-faint)' }}>
@@ -557,13 +732,52 @@ export default function App(): React.JSX.Element {
           )}
         </nav>
 
-        <div className="px-2 py-2 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
-          <NavItem active={panel === 'rooms'} onClick={() => openPanel('rooms')} icon={<RoomsIcon />} label="Rooms" />
-          <NavItem active={panel === 'routines'} onClick={() => openPanel('routines')} icon={<RoutineIcon />} label="Schedules" />
-          <NavItem active={panel === 'memory'} onClick={() => openPanel('memory')} icon={<MemoryIcon />} label="Memory" />
-          <NavItem active={panel === 'connectors'} onClick={() => openPanel('connectors')} icon={<PlugIcon />} label="Connectors" />
-          <NavItem active={panel === 'settings'} onClick={() => openPanel('settings')} icon={<GearIcon />} label="Settings" />
-        </div>
+        {sectionsOpen ? (
+          <div className="px-2 py-2 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
+            <div className="flex items-center justify-between pl-2 pr-1 pb-1">
+              <span className="text-[10.5px] uppercase tracking-wider" style={{ color: 'var(--sidebar-faint)' }}>
+                App
+              </span>
+              <IconBtn
+                active={false}
+                onClick={() => {
+                  setSectionsOpen(false)
+                  try {
+                    localStorage.setItem('redsky.sections', '0')
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                title="Collapse app tools"
+              >
+                <ChevronDownIcon />
+              </IconBtn>
+            </div>
+            <NavItem active={panel === 'rooms'} onClick={() => openPanel('rooms')} icon={<RoomsIcon />} label="Rooms" />
+            <NavItem active={panel === 'routines'} onClick={() => openPanel('routines')} icon={<RoutineIcon />} label="Schedules" />
+            <NavItem active={panel === 'memory'} onClick={() => openPanel('memory')} icon={<MemoryIcon />} label="Memory" />
+            <NavItem active={panel === 'history'} onClick={() => openPanel('history')} icon={<HistoryIcon />} label="History" />
+            <NavItem active={panel === 'connectors'} onClick={() => openPanel('connectors')} icon={<PlugIcon />} label="Connectors" />
+            <NavItem active={panel === 'settings'} onClick={() => openPanel('settings')} icon={<GearIcon />} label="Settings" />
+          </div>
+        ) : (
+          <div className="px-2 py-1.5 shrink-0 flex justify-center" style={{ borderTop: '0.5px solid var(--border)' }}>
+            <IconBtn
+              active={panel !== 'none'}
+              onClick={() => {
+                setSectionsOpen(true)
+                try {
+                  localStorage.setItem('redsky.sections', '1')
+                } catch {
+                  /* ignore */
+                }
+              }}
+              title="App tools: rooms, schedules, memory, connectors, settings"
+            >
+              <ChevronUpIcon />
+            </IconBtn>
+          </div>
+        )}
 
         <div className="px-3.5 pb-3.5 pt-2 flex items-center gap-2 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
           <StatusDot status={boot} />
@@ -602,6 +816,9 @@ export default function App(): React.JSX.Element {
             </span>
           )}
           <div className="window-no-drag ml-auto flex items-center gap-1.5">
+            <IconBtn active={false} onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')} title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+              <ModeIcon />
+            </IconBtn>
             <button
               onClick={() => setPalette(true)}
               className="window-no-drag flex items-center gap-1.5 text-[11.5px] pl-2.5 pr-1.5 py-1.5 rounded-lg hover:bg-[var(--bg-hover)] pressable"
@@ -716,20 +933,8 @@ export default function App(): React.JSX.Element {
                     />
                   ))}
 
-                  {selected.status === 'running' && (
-                    <>
-                      <div className="ev-list space-y-1.5">
-                        {selected.computer.slice(-5).map((c) => (
-                          <ComputerEventCard key={c.id} ev={c} />
-                        ))}
-                      </div>
-                      <RunningDots hue={selected.hue} label={selected.activity} />
-                    </>
-                  )}
+                  {selected.status === 'running' && <WorkingWindow hue={selected.hue} name={selected.name} />}
 
-                  {lastWasResult && hasResult && (
-                    <RunResultCard bot={selected} onOpenFile={(p) => void api.fileContent(p).then((content) => { setFileView({ path: p, content }); setPanel('activity') })} onOpenActivity={() => setPanel('activity')} />
-                  )}
                   {lastWasResult && !hasResult && <ActivitySummary bot={selected} onOpen={() => setPanel('activity')} />}
 
                   {lastWasResult && (
@@ -788,45 +993,6 @@ export default function App(): React.JSX.Element {
 
             <footer className="px-6 pb-5 pt-2">
               <div className="mx-auto w-full max-w-3xl">
-                {(boot !== 'online' || (setup && !setup.opencode.found)) && (
-                  <div
-                    className="mb-2 rounded-xl px-3 py-2.5"
-                    style={{ background: 'color-mix(in srgb, var(--bg-card) 55%, transparent)', border: '0.5px solid color-mix(in srgb, var(--text-warning) 30%, transparent)' }}
-                  >
-                    <p className="text-[12px] font-medium mb-1.5" style={{ color: 'var(--text-warning)' }}>
-                      First-run setup
-                    </p>
-                    <div className="space-y-1 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                      <p>
-                        <Check ok={setup !== null && setup.opencode.found} /> OpenCode CLI on PATH
-                        {setup && !setup.opencode.found && (
-                          <>
-                            {' '}
-                            —{' '}
-                            <a className="underline" style={{ color: 'var(--text-accent)' }} href="https://opencode.ai" target="_blank" rel="noreferrer">
-                              install it
-                            </a>
-                          </>
-                        )}
-                      </p>
-                      <p>
-                        <Check ok={(setup?.models ?? 0) > 0} /> Model provider configured
-                        {setup && setup.models === 0 && (
-                          <>
-                            {' '}
-                            —{' '}
-                            <a className="underline" style={{ color: 'var(--text-accent)' }} href="https://opencode.ai/docs" target="_blank" rel="noreferrer">
-                              run once and pick a provider
-                            </a>
-                          </>
-                        )}
-                      </p>
-                      <p>
-                        <Check ok={boot === 'online'} /> OpenCode server {boot === 'online' ? 'connected' : boot === 'starting' ? 'starting…' : 'offline'}
-                      </p>
-                    </div>
-                  </div>
-                )}
                 <div className={`flex items-end gap-2 rounded-2xl px-2.5 py-2${selected?.status === 'running' ? ' composer-running' : ''}`} style={{ background: 'var(--raised)', border: '0.5px solid var(--border)' }}>
                   <button
                     className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center hover:bg-[var(--bg-hover)]"
@@ -967,15 +1133,18 @@ export default function App(): React.JSX.Element {
               )}
               {activePanel === 'rooms' && <RoomsPanel rooms={rooms} bots={bots} onChange={setRooms} onClose={() => setPanel('none')} />}
               {activePanel === 'memory' && <MemoryPanel memories={memories} botId={selected?.id} onChange={setMemories} onClose={() => setPanel('none')} />}
+              {activePanel === 'history' && <HistoryPanel history={history} onOpen={(id) => { void openBot(id); setPanel('none') }} onClose={() => setPanel('none')} />}
               {activePanel === 'routines' && <RoutinePanel routines={routines} bots={bots} selectedId={selected?.id} onChange={setRoutines} onClose={() => setPanel('none')} />}
               {activePanel === 'connectors' && <ConnectorsPanel connectors={connectors} onChange={setConnectors} onClose={() => setPanel('none')} />}
-              {activePanel === 'settings' && settings && <SettingsPanel settings={settings} theme={theme} onChange={setSettings} onTheme={setTheme} onClose={() => setPanel('none')} />}
+              {activePanel === 'settings' && settings && <SettingsPanel settings={settings} theme={theme} mode={mode} onChange={setSettings} onTheme={setTheme} onMode={setMode} onClose={() => setPanel('none')} />}
             </div>
           </aside>
         </div>
       </main>
 
       {/* ── Agent editor ───────────────────────────────────────── */}
+      {menu && menuBot && <ContextMenu x={menu.x} y={menu.y} items={menuItemsFor(menuBot)} onClose={() => setMenu(null)} />}
+
       {editor && selected && (
         <div className="fixed inset-0 z-30 flex items-center justify-center modal-overlay" style={{ background: '#00000066' }} onClick={() => setEditor(null)}>
           <div className="w-[440px] rounded-2xl p-4 modal-card" style={{ background: 'var(--bg-elevated)', border: '0.5px solid var(--border)' }} onClick={(e) => e.stopPropagation()}>
@@ -1046,6 +1215,54 @@ export default function App(): React.JSX.Element {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {!setupReady && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 px-10 modal-overlay"
+          style={{ background: 'color-mix(in srgb, var(--substrate) 74%, transparent)' }}
+        >
+          <div className="window-drag absolute top-0 left-0 right-0 h-11 flex items-center px-4" style={{ background: 'var(--sidebar-tint)' }}>
+            <TrafficLights />
+          </div>
+
+          <div className="relative w-16 h-16 flex items-center justify-center">
+            <span className="setup-ring" />
+            <span className="setup-ring setup-ring-2" />
+            <Logo size={26} />
+          </div>
+
+          <div className="text-center max-w-sm">
+            <h1 className="text-[20px] font-semibold tracking-tight">Setting up Red Sky</h1>
+            <p className="text-[13px] leading-relaxed mt-1.5" style={{ color: 'var(--text-secondary)' }}>
+              Getting your OpenCode runtime ready. This only takes a moment.
+            </p>
+          </div>
+
+          <div
+            className="w-full max-w-sm rounded-2xl p-5 space-y-2.5 text-[12.5px] motion-scale"
+            style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}
+          >
+            <p className="flex items-center gap-1.5">
+              <Check ok={setup !== null && setup.opencode.found} /> OpenCode CLI on PATH
+            </p>
+            <p className="flex items-center gap-1.5 flex-wrap">
+              <Check ok={models.length > 0} /> Model provider configured
+              {!models.length && (
+                <a className="underline" style={{ color: 'var(--text-accent)' }} href="https://opencode.ai/docs" target="_blank" rel="noreferrer">
+                  run once and pick a provider
+                </a>
+              )}
+            </p>
+            <p className="flex items-center gap-1.5">
+              <Check ok={boot === 'online'} /> OpenCode server {boot === 'online' ? 'connected' : boot === 'starting' ? 'starting…' : 'offline'}
+            </p>
+          </div>
+
+          <p className="text-[11px] text-center" style={{ color: 'var(--text-tertiary)' }}>
+            Actions are paused until setup completes.
+          </p>
         </div>
       )}
 

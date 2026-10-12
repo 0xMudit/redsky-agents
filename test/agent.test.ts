@@ -12,6 +12,7 @@ import { createAgent, type AgentHandle } from '../electron/agent'
 import { createConnectorStore } from '../electron/connectors'
 import { createRoomStore } from '../electron/rooms'
 import { createSettingsStore } from '../electron/settings'
+import { createVault } from '../electron/vault'
 import { serverEvents } from '../electron/server'
 import { startFakeServer, type FakeServer } from './stubs/fake-opencode-server'
 import { cleanupTempHomes, drainMicrotasks, useTempHome } from './helpers'
@@ -91,6 +92,48 @@ describe('agent — createBot', () => {
   it('assigns a colour from the HUES palette', async () => {
     const bot = await agent.createBot()
     assert.match(bot.hue, /^#[0-9a-fA-F]{6}$/)
+  })
+})
+
+// ── reorderBots ───────────────────────────────────────────────────────────────
+
+describe('agent — reorderBots', () => {
+  it('assigns a sequential order matching the provided ids', async () => {
+    const a = await agent.createBot({ name: 'A' })
+    const b = await agent.createBot({ name: 'B' })
+    const c = await agent.createBot({ name: 'C' })
+
+    agent.reorderBots([c.id, a.id, b.id])
+
+    assert.equal(agent.getBot(c.id)?.order, 0)
+    assert.equal(agent.getBot(a.id)?.order, 1)
+    assert.equal(agent.getBot(b.id)?.order, 2)
+  })
+
+  it('leaves updatedAt untouched so reordering is not treated as activity', async () => {
+    const a = await agent.createBot({ name: 'A' })
+    const b = await agent.createBot({ name: 'B' })
+    const before = agent.getBot(a.id)?.updatedAt
+
+    agent.reorderBots([b.id, a.id])
+
+    assert.equal(agent.getBot(a.id)?.updatedAt, before)
+  })
+
+  it('ignores unknown ids and returns only the changed bots', async () => {
+    const a = await agent.createBot({ name: 'A' })
+    const b = await agent.createBot({ name: 'B' })
+    const changed = agent.reorderBots([a.id, 'bot_missing', b.id])
+    assert.equal(changed.length, 2)
+    assert.equal(agent.getBot(a.id)?.order, 0)
+  })
+
+  it('places a newly created bot on top once a manual order exists', async () => {
+    const a = await agent.createBot({ name: 'A' })
+    const b = await agent.createBot({ name: 'B' })
+    agent.reorderBots([a.id, b.id])
+    const fresh = await agent.createBot({ name: 'Fresh' })
+    assert.equal(fresh.order, -1)
   })
 })
 
@@ -324,5 +367,102 @@ describe('agent — workspace diff on idle', () => {
 
     assert.ok(done.runDiff?.added.includes(created), 'file created during the run should be added')
     assert.ok(!done.runDiff?.added.includes(preexisting), 'pre-existing file must not be reported as added')
+  })
+})
+
+// ── conversation vault ────────────────────────────────────────────────────────
+
+describe('agent — conversation vault', () => {
+  it('records exchanges and recalls earlier conversations in the next system prompt', async () => {
+    const vault = createVault()
+    const a = createAgent({
+      connectors: createConnectorStore(),
+      rooms: createRoomStore(),
+      settings: createSettingsStore(),
+      scheduleReminder: () => ({ id: 'r', botId: '', schedule: '', prompt: '', enabled: true, origin: 'reminder' as const }),
+      cancelReminders: () => 0,
+      vault,
+    })
+    a.attach(srv.baseUrl)
+    const bot = await a.createBot({ name: 'Vaulted' })
+
+    await a.send(bot.id, { text: 'the launch codename is falcon' })
+    serverEvents.emit('event', {
+      type: 'message.part.delta',
+      properties: { sessionID: bot.sessionId, partID: 'vault_p1', delta: 'Noted for next time: launch codename is falcon.' },
+    })
+    serverEvents.emit('event', { type: 'session.idle', properties: { sessionID: bot.sessionId } })
+    await waitForBot(a, (b) => b.id === bot.id && b.status === 'idle')
+
+    // Both the user turn and the finished reply should be on disk.
+    assert.equal(vault.turns(bot.id).length, 2)
+
+    // A follow-up question must carry the earlier exchange back into the prompt.
+    await a.send(bot.id, { text: 'what is the launch codename again?' })
+    const last = srv.prompts.at(-1)?.body as { system?: string } | undefined
+    const system = String(last?.system ?? '')
+    assert.match(system, /Things you remember about this user/)
+    assert.match(system, /Excerpts recalled from earlier conversations/)
+    assert.match(system, /falcon/)
+  })
+
+  it('importHistory folds pre-existing threads into the vault, tagged with the settings user', async () => {
+    const vault = createVault()
+    const settings = createSettingsStore()
+    settings.update({ userName: 'Mudit' })
+    const a = createAgent({
+      connectors: createConnectorStore(),
+      rooms: createRoomStore(),
+      settings,
+      scheduleReminder: () => ({ id: 'r', botId: '', schedule: '', prompt: '', enabled: true, origin: 'reminder' as const }),
+      cancelReminders: () => 0,
+      vault,
+    })
+    a.attach(srv.baseUrl)
+    const bot = await a.createBot({ name: 'Legacy' })
+    const stored = a.store.get(bot.id)!
+    stored.thread = [
+      { id: 'old_q', role: 'user', text: 'book the offsite venue for tuesday', at: 1_000 },
+      { id: 'old_a', role: 'assistant', text: 'booked it, tuesday', at: 2_000 },
+    ]
+    a.store.upsert(stored)
+
+    assert.equal(a.importHistory(), 2)
+    const turns = vault.turns(bot.id)
+    assert.equal(turns.length, 2)
+    assert.ok(turns.every((t) => t.user === 'Mudit'))
+    assert.ok(vault.hasTurn('old_q'))
+
+    // Idempotent — a second run imports nothing new and leaves nothing doubled.
+    assert.equal(a.importHistory(), 0)
+    assert.equal(vault.turns(bot.id).length, 2)
+  })
+
+  it('tags turns recorded during a normal run with the settings user', async () => {
+    const vault = createVault()
+    const settings = createSettingsStore()
+    settings.update({ userName: 'Priya' })
+    const a = createAgent({
+      connectors: createConnectorStore(),
+      rooms: createRoomStore(),
+      settings,
+      scheduleReminder: () => ({ id: 'r', botId: '', schedule: '', prompt: '', enabled: true, origin: 'reminder' as const }),
+      cancelReminders: () => 0,
+      vault,
+    })
+    a.attach(srv.baseUrl)
+    const bot = await a.createBot({ name: 'Tagged' })
+
+    await a.send(bot.id, { text: 'hello from priya' })
+    serverEvents.emit('event', {
+      type: 'message.part.delta',
+      properties: { sessionID: bot.sessionId, partID: 'tag_p1', delta: 'Hello Priya, noted.' },
+    })
+    serverEvents.emit('event', { type: 'session.idle', properties: { sessionID: bot.sessionId } })
+    await waitForBot(a, (b) => b.id === bot.id && b.status === 'idle')
+
+    const turns = vault.turns(bot.id)
+    assert.equal(turns.length, 2)
+    assert.ok(turns.every((t) => t.user === 'Priya'))
   })
 })

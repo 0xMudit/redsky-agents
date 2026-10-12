@@ -79,6 +79,7 @@ export interface Bot {
   watchMode?: boolean
   pinned?: boolean
   archived?: boolean
+  order?: number
   parentId?: string
   activity?: string
   runDiff?: RunDiff
@@ -152,6 +153,19 @@ export interface AppSettings {
   defaultModel?: string
   speakResults?: boolean
   lastDigestAt?: number
+  /** Who is talking to the agents. Every recorded turn is tagged with it. */
+  userName?: string
+}
+
+/** One recorded message in the per-user conversation history. */
+export interface HistoryTurn {
+  id: string
+  at: number
+  role: 'user' | 'assistant' | 'system'
+  text: string
+  botId: string
+  botName: string
+  user?: string
 }
 
 export interface InitPayload {
@@ -203,8 +217,10 @@ export interface RedSkyApi {
   renameBot: (botId: string, payload: { name: string; job?: string }) => Promise<Bot>
   duplicateBot: (botId: string) => Promise<Bot>
   setBotFlags: (botId: string, flags: { pinned?: boolean; archived?: boolean }) => Promise<Bot>
+  reorderBots: (orderedIds: string[]) => Promise<Bot[]>
   branchFrom: (botId: string, messageId: string, model?: string) => Promise<Bot>
   search: (query: string) => Promise<SearchHit[]>
+  lifeTip: () => Promise<string>
   send: (botId: string, payload: { text: string; model?: string; roomId?: string; attachments?: string[] }) => Promise<Bot>
   abortBot: (botId: string) => Promise<{ ok: boolean }>
   listBots: () => Promise<Bot[]>
@@ -224,6 +240,7 @@ export interface RedSkyApi {
   addMemory: (payload: { key: string; value: string; botId?: string }) => Promise<MemoryRow>
   deleteMemory: (id: string) => Promise<{ ok: boolean }>
   clearMemories: () => Promise<{ ok: boolean }>
+  listHistory: () => Promise<HistoryTurn[]>
   listRoutines: () => Promise<Routine[]>
   addRoutine: (payload: {
     botId: string

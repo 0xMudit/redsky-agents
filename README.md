@@ -53,6 +53,7 @@ session you can schedule, correct, and hand work to. The pieces that make that w
 | **Artifacts & diffs** | Each finished run reports files added, changed, and removed, with a file browser and inline viewer. |
 | **Branching** | Fork a finished result into a new agent that takes another run at the same ask, inheriting the job and color. |
 | **Memory** | Facts a bot notes with "Noted for next time:" are harvested, stored, and recalled across sessions. |
+| **Conversation vault** | Every exchange is written to a markdown vault in your Documents folder, so bots recall earlier conversations and build up a running profile of you. |
 | **Schedules & reminders** | Cron-style routines (`every 30 m`, `every 2 h`, `09:00`) and natural-language reminders ("remind me to reconcile spend at 9am"). |
 | **Teach a routine** | Turn the task a bot just did into a recurring schedule with one click. |
 | **Rooms & handoff** | Group threads where bots pass work to each other with `@Name` mentions. |
@@ -61,6 +62,7 @@ session you can schedule, correct, and hand work to. The pieces that make that w
 | **Connectors** | A status board for the tools a bot may use (Browser, Gmail, Calendar, Slack, GitHub, Drive, Notion). |
 | **Notifications** | Desktop and in-app notices when a bot finishes, needs approval, or errors — plus unread counts per agent. |
 | **Search** | Filter agents by name, job, or last result — and search inside the workspace, opening any hit in the file viewer. |
+| **Appearance** | Light and dark modes (dark-first) plus seven accent themes including the clean, minimal **Mainline** — applied live and remembered per machine. |
 
 ## Screenshots
 
@@ -161,6 +163,13 @@ Everything is stored under Electron's `userData` directory and is **never** wipe
 | `workspace/logs/` | `app.ndjson`, `tools.ndjson`, `audit.ndjson`, and `server-*.info` for each boot. |
 
 Use **Open Workspace** and **Open Logs** in the app to jump straight to either directory.
+
+Separately, Red Sky keeps a **conversation vault** in your Documents folder (`Documents/Red Sky` on Windows
+and macOS, `~/Documents/Red Sky` on Linux). It records every message you and a teammate exchange — raw
+transcripts in `raw/`, a readable page per teammate in `conversations/`, a catalog in `index.md`, a
+chronological `log.md`, and a growing `profile.md` of what is known about you. Relevant parts are recalled
+into the next run, so a bot remembers earlier conversations across restarts. It is plain markdown you can
+read, back up, or delete at any time, and it stays out of your working files.
 
 ## How it works
 

@@ -12,6 +12,8 @@ import { serverEvents } from './server'
 import { type SettingsStore } from './settings'
 import { parseCancelReminder, parseReminder, reminderLabel } from './remind'
 import { createBotStore, HUES, type BotRecord, type BotStore, type ChatMessage, type ComputerEvent } from './store'
+import { createTipEngine } from './tips'
+import { type Vault } from './vault'
 import { diffSnaps, searchWorkspaceFiles, snapshotWorkspace, type FileSnap } from './workspace'
 import { partLooksLikeThinking, previewOf, stripThinking } from '../shared/visible'
 import type { Artifact, Routine, SearchHit } from '../shared/types'
@@ -22,6 +24,8 @@ export interface AgentDeps {
   settings: SettingsStore
   scheduleReminder: (botId: string, schedule: string, prompt: string) => Routine
   cancelReminders: (botId: string) => number
+  /** Durable conversation record. Optional so pure-in-memory tests can omit it. */
+  vault?: Vault
 }
 
 export interface AgentHandle {
@@ -31,6 +35,7 @@ export interface AgentHandle {
   renameBot: (botId: string, name: string, job?: string) => Promise<BotRecord>
   duplicateBot: (botId: string) => Promise<BotRecord>
   setBotFlags: (botId: string, flags: { pinned?: boolean; archived?: boolean }) => BotRecord
+  reorderBots: (orderedIds: string[]) => BotRecord[]
   branchFrom: (botId: string, prompt: string, model?: ModelRef) => Promise<BotRecord>
   send: (botId: string, input: { text: string; model?: ModelRef; roomId?: string; internal?: boolean; attachments?: string[] }) => Promise<BotRecord>
   abort: (botId: string) => Promise<void>
@@ -45,12 +50,19 @@ export interface AgentHandle {
   setWatchMode: (botId: string, enabled: boolean) => BotRecord
   attachRoom: (botId: string, roomId: string) => void
   lastUserPrompt: (botId: string) => string | undefined
+  /** A model-written life tip for the small "working" window. */
+  lifeTip: () => Promise<string>
+  /** Pre-generate tips in the background so the first send has them ready. */
+  warmTips: () => void
   search: (query: string) => SearchHit[]
   nudgeReminder: (botId: string, prompt: string) => BotRecord | undefined
+  /** Fold existing threads into the vault so they count as history. */
+  importHistory: () => number
   listFiles: (rel?: string) => Promise<Array<{ name: string; path: string; type?: string }>>
   readFile: (rel: string) => Promise<string>
   store: BotStore
   memory: MemoryStore
+  vault?: Vault
 }
 
 export const JOB_TEMPLATES: Array<{ name: string; job: string }> = [
@@ -121,6 +133,13 @@ export function createAgent(deps: AgentDeps): AgentHandle {
   const hydrateTimer = new Map<string, ReturnType<typeof setTimeout>>()
   const queued = new Map<string, { text: string; model?: ModelRef; roomId?: string }>()
   const snaps = new Map<string, FileSnap[]>()
+  // The turn id of the user message currently being answered, so the prompt's
+  // recalled-memory block doesn't just hand the model back its own question.
+  const pendingTurn = new Map<string, string>()
+  const vault = deps.vault
+  // Model-written life tips, generated through the same OpenCode server but in
+  // their own throwaway session so they never touch an agent's thread.
+  const tips = createTipEngine({ baseUrl: () => baseUrl })
 
   let baseUrl = ''
   let attached = false
@@ -165,6 +184,8 @@ export function createAgent(deps: AgentDeps): AgentHandle {
   }
 
   function pushComputer(bot: BotRecord, ev: Omit<ComputerEvent, 'id'> & { id?: string }): void {
+    const last = bot.computer[bot.computer.length - 1]
+    if (last && last.kind === ev.kind && last.title === ev.title && last.detail === ev.detail) return
     bot.computer.push({
       id: ev.id ?? newId('c'),
       kind: ev.kind,
@@ -210,13 +231,15 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     return `\nOther bots you can hand work to with @Name: ${others.map((b) => `@${b.name}`).join(', ')}.`
   }
 
-  function buildSystem(bot: BotRecord): string {
+  function buildSystem(bot: BotRecord, query = ''): string {
     const settings = deps.settings.get()
     const mem = memory.search('', 8, bot.id)
     const ws = workspaceDir()
     const memBlock = mem.length
       ? `\n\nThings this bot has been told to remember:\n${mem.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
       : ''
+    const pending = pendingTurn.get(bot.id)
+    const vaultBlock = vault ? vault.contextBlock(bot.id, query, pending ? [pending] : []) : ''
     const job = bot.job.trim() ? `\nYour job: ${bot.job.trim()}` : ''
     const privacy = settings.privacyMode
       ? '\nPrivacy mode is on. Do not copy secrets, tokens, or personal data into logs or outbound drafts.'
@@ -235,9 +258,59 @@ export function createAgent(deps: AgentDeps): AgentHandle {
       settings.allowBotHandoff ? peersLine(bot) : '',
       privacy,
       memBlock,
+      vaultBlock,
     ]
       .filter(Boolean)
       .join('\n')
+  }
+
+  /** Persist one message to the vault. Idempotent — the message id is the key. */
+  function recordTurn(bot: BotRecord, msg: ChatMessage): void {
+    if (!vault || !msg.text?.trim()) return
+    const turn = vault.recordTurn({
+      id: msg.id,
+      at: msg.at,
+      role: msg.role,
+      text: msg.text,
+      botId: bot.id,
+      botName: bot.name,
+      user: deps.settings.get().userName,
+    })
+    if (turn && msg.role === 'user') pendingTurn.set(bot.id, turn.id)
+  }
+
+  /**
+   * Fold every message already in bot threads into the vault, so conversations
+   * that predate the vault (or happened before it was wired up) still count as
+   * history and become recallable. Idempotent — recorded ids are skipped.
+   */
+  function importHistory(): number {
+    if (!vault) return 0
+    const user = deps.settings.get().userName
+    let imported = 0
+    for (const bot of store.list()) {
+      let index = 0
+      for (const msg of bot.thread) {
+        const text = msg.text?.trim()
+        if (!text) continue
+        // Deterministic id for old messages that never got one, so a second
+        // run cannot duplicate them.
+        const id = msg.id ?? `his_${bot.id}_${msg.at ?? 0}_${index}`
+        const turn = vault.recordTurn({
+          id,
+          at: msg.at ?? bot.createdAt,
+          role: msg.role,
+          text: msg.text,
+          botId: bot.id,
+          botName: bot.name,
+          user,
+        })
+        if (turn) imported++
+        index++
+      }
+    }
+    if (imported > 0) vault.note('history.backfill', `Imported ${imported} past messages into the vault.`)
+    return imported
   }
 
   async function createSession(title: string): Promise<string> {
@@ -318,6 +391,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
   function harvestAndTeach(bot: BotRecord): void {
     const last = [...bot.thread].reverse().find((m) => m.role === 'assistant')
     if (last?.text) memory.harvestFromText(last.text, bot.id)
+    vault?.syncProfile(memory.list())
     if (!bot.watchMode) return
     const prompt = lastUserPrompt(bot.id)
     if (!prompt) return
@@ -336,11 +410,17 @@ export function createAgent(deps: AgentDeps): AgentHandle {
           run.set(String(part.id), String(part.text ?? ''))
           partText.set(bot.id, run)
           applyAssistant(bot, run)
-        } else if (part.type === 'tool' || part.type === 'step-start' || part.type === 'file') {
-          const title = String(part.tool ?? part.name ?? part.type ?? 'tool')
-          const detail = String(part.state ?? part.output ?? part.path ?? part.title ?? JSON.stringify(part).slice(0, 400))
+        } else if (part.type === 'tool' || part.type === 'file') {
+          const state = typeof part.state === 'object' && part.state ? (part.state as Record<string, unknown>) : {}
+          const input = typeof state.input === 'object' && state.input ? (state.input as Record<string, unknown>) : {}
+          const pick = (v: unknown): string => (typeof v === 'string' ? v : '')
+          const title = pick(part.tool) || pick(part.name) || (part.type === 'file' ? 'file' : 'tool')
+          const detail = pick(part.path) || pick(state.title) || pick(state.command) || pick(input.command) || pick(part.title) || pick(part.output)
           bot.activity = title
           pushComputer(bot, { kind: part.type === 'file' ? 'file' : 'tool', title, detail, at: Date.now() })
+          queueFlush(bot)
+        } else if (part.type === 'step-start' || part.type === 'step-finish') {
+          bot.activity = undefined
           queueFlush(bot)
         }
         break
@@ -392,6 +472,12 @@ export function createAgent(deps: AgentDeps): AgentHandle {
         store.upsert(bot)
         partText.delete(bot.id)
         emitBot(bot)
+        // The run is over, so the trailing assistant text is final — now it is
+        // safe to write it to the vault (during streaming it is still partial).
+        for (const msg of bot.thread.slice(-8)) {
+          if (msg.role === 'assistant') recordTurn(bot, msg)
+        }
+        pendingTurn.delete(bot.id)
         harvestAndTeach(bot)
         scheduleHydrate(bot)
         break
@@ -421,6 +507,12 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     const name = (input?.name || 'New agent').trim()
     const now = Date.now()
     const sessionId = await createSession(name)
+    // Once the user has dragged agents into a manual order, a freshly created agent
+    // should still land on top rather than at the bottom of the pinned/unpinned group.
+    const orders = store
+      .list()
+      .map((b) => b.order)
+      .filter((o): o is number => typeof o === 'number')
     const bot: BotRecord = {
       id: newId('bot'),
       name,
@@ -433,11 +525,13 @@ export function createAgent(deps: AgentDeps): AgentHandle {
       computer: [],
       createdAt: now,
       updatedAt: now,
+      ...(orders.length ? { order: Math.min(...orders) - 1 } : {}),
     }
     botBySession.set(sessionId, bot.id)
     store.upsert(bot)
     emitBot(bot)
     audit('bot.create', { botId: bot.id, name })
+    vault?.note('agent.create', `${name}${bot.job ? ` — ${bot.job}` : ''}`, { id: bot.id, name: bot.name })
     return snapshot(bot)
   }
 
@@ -472,6 +566,22 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     return snapshot(bot)
   }
 
+  // Persists the sidebar order. Reordering is a view concern, so updatedAt is left
+  // untouched (bumping it would make reordered agents look recently active).
+  function reorderBots(orderedIds: string[]): BotRecord[] {
+    const rank = new Map(orderedIds.map((id, i) => [id, i] as const))
+    const changed: BotRecord[] = []
+    for (const bot of store.list()) {
+      const next = rank.get(bot.id)
+      if (next === undefined || bot.order === next) continue
+      bot.order = next
+      store.upsert(bot)
+      changed.push(bot)
+    }
+    for (const bot of changed) emitBot(bot)
+    return changed.map(snapshot)
+  }
+
   async function branchFrom(botId: string, prompt: string, model?: ModelRef): Promise<BotRecord> {
     const src = store.get(botId)
     if (!src) throw new Error('bot not found')
@@ -491,8 +601,11 @@ export function createAgent(deps: AgentDeps): AgentHandle {
   }
 
   function applyReminderTurn(bot: BotRecord, userText: string, assistantText: string): BotRecord {
-    bot.thread.push({ id: newId('m'), role: 'user', text: userText, at: Date.now() })
-    bot.thread.push({ id: newId('m'), role: 'assistant', text: assistantText, at: Date.now(), kind: 'chat' })
+    const userMsg: ChatMessage = { id: newId('m'), role: 'user', text: userText, at: Date.now() }
+    const botMsg: ChatMessage = { id: newId('m'), role: 'assistant', text: assistantText, at: Date.now(), kind: 'chat' }
+    bot.thread.push(userMsg, botMsg)
+    recordTurn(bot, userMsg)
+    recordTurn(bot, botMsg)
     bot.preview = previewOf(assistantText)
     bot.status = 'idle'
     bot.error = undefined
@@ -505,13 +618,15 @@ export function createAgent(deps: AgentDeps): AgentHandle {
   function nudgeReminder(botId: string, prompt: string): BotRecord | undefined {
     const bot = store.get(botId)
     if (!bot) return undefined
-    bot.thread.push({
+    const reminderMsg: ChatMessage = {
       id: newId('m'),
       role: 'assistant',
       text: prompt,
       at: Date.now(),
       kind: 'reminder',
-    })
+    }
+    bot.thread.push(reminderMsg)
+    recordTurn(bot, reminderMsg)
     let extra = bot.thread.filter((m) => m.kind === 'reminder').length - 40
     if (extra > 0) {
       bot.thread = bot.thread.filter((m) => {
@@ -560,6 +675,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
   function clearThread(botId: string): BotRecord {
     const bot = store.get(botId)
     if (!bot) throw new Error('bot not found')
+    vault?.note('thread.cleared', `Thread cleared for ${bot.name}`, { id: bot.id, name: bot.name })
     bot.thread = []
     bot.computer = []
     bot.preview = ''
@@ -586,7 +702,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
 
   async function dispatchPrompt(bot: BotRecord, text: string, model?: ModelRef): Promise<void> {
     const sessionId = await ensureSession(bot)
-    const body: Record<string, unknown> = { parts: [{ type: 'text', text }], system: buildSystem(bot) }
+    const body: Record<string, unknown> = { parts: [{ type: 'text', text }], system: buildSystem(bot, text) }
     const m = model ?? modelRefFrom(bot.model)
     if (m) body.model = m
     await apiEmpty('POST', `${baseUrl}/session/${sessionId}/prompt_async`, body)
@@ -664,13 +780,16 @@ export function createAgent(deps: AgentDeps): AgentHandle {
           })
           await send(hit.botId, { text: prompt, model: input.model, roomId: input.roomId, internal: true })
         }
-        bot.thread.push({ id: newId('m'), role: 'user', text: input.text, at: Date.now() })
-        bot.thread.push({
+        const askMsg: ChatMessage = { id: newId('m'), role: 'user', text: input.text, at: Date.now() }
+        const handoffMsg: ChatMessage = {
           id: newId('m'),
           role: 'assistant',
           text: `Handed off to ${others.map((o) => o.name).join(', ')}. You can keep watching this thread.`,
           at: Date.now(),
-        })
+        }
+        bot.thread.push(askMsg, handoffMsg)
+        recordTurn(bot, askMsg)
+        recordTurn(bot, handoffMsg)
         bot.preview = previewOf(`Asking ${others[0].name}…`)
         bot.updatedAt = Date.now()
         store.upsert(bot)
@@ -688,7 +807,9 @@ export function createAgent(deps: AgentDeps): AgentHandle {
         title: 'Auto Review',
         detail: reason,
       }
-      bot.thread.push({ id: newId('m'), role: 'user', text: input.text, at: Date.now() })
+      const heldMsg: ChatMessage = { id: newId('m'), role: 'user', text: input.text, at: Date.now() }
+      bot.thread.push(heldMsg)
+      recordTurn(bot, heldMsg)
       bot.preview = previewOf(input.text)
       bot.updatedAt = Date.now()
       store.upsert(bot)
@@ -698,7 +819,9 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     }
 
     if (input.model) bot.model = `${input.model.providerID}\u241f${input.model.modelID}`
-    bot.thread.push({ id: newId('m'), role: 'user', text: input.text, at: Date.now() })
+    const promptMsg: ChatMessage = { id: newId('m'), role: 'user', text: input.text, at: Date.now() }
+    bot.thread.push(promptMsg)
+    recordTurn(bot, promptMsg)
     bot.preview = previewOf(input.text)
     bot.status = 'running'
     bot.error = undefined
@@ -736,6 +859,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     bot.updatedAt = Date.now()
     store.upsert(bot)
     partText.delete(bot.id)
+    pendingTurn.delete(bot.id)
     emitBot(bot)
   }
 
@@ -744,6 +868,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     store.delete(botId)
     partText.delete(botId)
     queued.delete(botId)
+    pendingTurn.delete(botId)
     if (bot?.sessionId) {
       botBySession.delete(bot.sessionId)
       if (baseUrl) await api('DELETE', `${baseUrl}/session/${bot.sessionId}`).catch(() => undefined)
@@ -829,6 +954,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     renameBot,
     duplicateBot,
     setBotFlags,
+    reorderBots,
     branchFrom,
     send,
     abort,
@@ -846,12 +972,16 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     setWatchMode,
     attachRoom,
     lastUserPrompt,
+    lifeTip: () => tips.next(),
+    warmTips: () => tips.warm(),
     search,
     nudgeReminder,
+    importHistory,
     listFiles,
     readFile,
     store,
     memory,
+    vault,
   }
 }
 

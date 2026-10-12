@@ -70,6 +70,22 @@ startup. Changes are applied when you press **Save** in the Settings panel.
 
 Reserved keys are read and written but not surfaced in the UI — don't build on them yet.
 
+## Appearance
+
+Renderer-only preferences, stored in `localStorage` (per machine) rather than `settings.json`. They live at
+startup on the page and apply instantly without a reload.
+
+| Preference | Keys | Options | Default |
+| --- | --- | --- | --- |
+| Mode | `redsky.mode` | `dark` \| `light` | `dark` |
+| Accent theme | `redsky.theme` | `mainline`, `coral`, `aurora`, `emerald`, `amber`, `rose`, `ice` | `coral` |
+| App tools drawer | `redsky.sections` | `0` (collapsed) \| `1` (open) | open |
+
+Switch mode from the moon/sun button in the header, **Settings → Appearance**, or the command palette
+(`Cmd/Ctrl+K`). The accent swatches tint whichever mode is active — **Mainline** is the clean, minimal
+graphite palette. The **App tools drawer** (Rooms, Schedules, Memory, History, Connectors, Settings) collapses
+to a single chevron in the sidebar with the `−` button at its top-right corner.
+
 ## Auto Review policy
 
 `electron/policy.ts` matches the prompt you send against sensitive patterns before it reaches OpenCode:

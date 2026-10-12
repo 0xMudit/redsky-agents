@@ -13,6 +13,9 @@ interface ChatBody {
   name?: string
   job?: string
   model?: string
+  /** Durable facts about the user, rendered as `key: value`. */
+  memory?: string[]
+  userName?: string
 }
 
 export async function POST(req: Request) {
@@ -30,10 +33,21 @@ export async function POST(req: Request) {
 
   const name = (body.name || 'Red Sky agent').slice(0, 60)
   const job = (body.job || '').slice(0, 400)
+  const userName = typeof body.userName === 'string' ? body.userName.trim().slice(0, 60) : ''
+  const memory = Array.isArray(body.memory)
+    ? body.memory.map((m) => (typeof m === 'string' ? m.trim().slice(0, 240) : '')).filter(Boolean).slice(0, 12)
+    : []
   const system =
     `You are ${name}, an autonomous teammate running inside Red Sky.` +
     (job ? ` Your job: ${job}` : '') +
-    ' Be concise, practical, and action-oriented. Prefer short, concrete answers over preamble.'
+    (userName ? ` The person talking to you is ${userName}.` : '') +
+    ' Be concise, practical, and action-oriented. Prefer short, concrete answers over preamble.' +
+    (memory.length
+      ? `\n\nThings you remember about this user:\n${memory.map((m) => `- ${m}`).join('\n')}`
+      : '') +
+    (memory.length
+      ? '\nUse these memories to personalize replies. If the user refers to anything from the past, rely on them instead of asking the user to repeat it.'
+      : '')
 
   const history = Array.isArray(body.messages) ? body.messages : []
   const messages = [

@@ -13,6 +13,7 @@ import { createScheduler, type SchedulerHandle } from './scheduler'
 import { startServer, serverEvents, stop as stopServer } from './server'
 import { createSettingsStore } from './settings'
 import { tools } from './tools'
+import { createVault } from './vault'
 import { checkOpenCode, composeFeedbackUrl, redactedLogTail } from './beta'
 import { previewOf } from '../shared/visible'
 import type { ModelRef } from './http'
@@ -26,6 +27,7 @@ let settingsStore: ReturnType<typeof createSettingsStore> | undefined
 let connectorStore: ReturnType<typeof createConnectorStore> | undefined
 let roomStore: ReturnType<typeof createRoomStore> | undefined
 let noticeStore: ReturnType<typeof createNoticeStore> | undefined
+let vaultStore: ReturnType<typeof createVault> | undefined
 const lastBotStatus = new Map<string, Bot['status']>()
 const log = createLogger()
 
@@ -40,6 +42,9 @@ function rooms(): ReturnType<typeof createRoomStore> {
 }
 function notices(): ReturnType<typeof createNoticeStore> {
   return (noticeStore ??= createNoticeStore())
+}
+function vault(): ReturnType<typeof createVault> {
+  return (vaultStore ??= createVault())
 }
 
 function pushNotice(bot: Bot, kind: NoticeKind, title: string, body: string, alwaysOs = false): void {
@@ -166,6 +171,8 @@ function wireIpc(): void {
     requireAgent().setBotFlags(botId, flags ?? {}),
   )
 
+  ipcMain.handle('rs:reorderBots', async (_e, orderedIds: string[]) => requireAgent().reorderBots(Array.isArray(orderedIds) ? orderedIds : []))
+
   ipcMain.handle('rs:branchFrom', async (_e, botId: string, messageId: string, model?: string) => {
     const a = requireAgent()
     const message = a.getBot(botId)?.thread.find((m) => m.id === messageId)
@@ -178,6 +185,8 @@ function wireIpc(): void {
   })
 
   ipcMain.handle('rs:search', async (_e, query: string) => (query?.trim() ? requireAgent().search(query.trim()) : []))
+
+  ipcMain.handle('rs:lifeTip', async () => requireAgent().lifeTip())
 
   ipcMain.handle('rs:send', async (_e, botId: string, payload: { text: string; model?: string; roomId?: string }) => {
     if (!payload?.text?.trim()) throw new Error('empty prompt')
@@ -257,18 +266,29 @@ function wireIpc(): void {
 
   ipcMain.handle('rs:listMemories', async (_e, botId?: string) => requireAgent().memory.list(botId))
 
+  ipcMain.handle('rs:listHistory', async (_e, user?: string) =>
+    vault()
+      .turns()
+      .filter((t) => !user || t.user === user || !t.user)
+      .reverse(),
+  )
+
   ipcMain.handle('rs:addMemory', async (_e, payload: { key: string; value: string; botId?: string }) => {
     if (!payload?.key?.trim() || !payload?.value?.trim()) throw new Error('key and value required')
-    return requireAgent().memory.add(payload.key.trim(), payload.value.trim(), payload.botId)
+    const row = requireAgent().memory.add(payload.key.trim(), payload.value.trim(), payload.botId)
+    vault().syncProfile(requireAgent().memory.list())
+    return row
   })
 
   ipcMain.handle('rs:deleteMemory', async (_e, id: string) => {
     requireAgent().memory.remove(id)
+    vault().syncProfile(requireAgent().memory.list())
     return { ok: true }
   })
 
   ipcMain.handle('rs:clearMemories', async () => {
     requireAgent().memory.clear()
+    vault().syncProfile(requireAgent().memory.list())
     return { ok: true }
   })
 
@@ -424,6 +444,7 @@ app.whenReady().then(async () => {
     connectors: connectors(),
     rooms: rooms(),
     settings: settings(),
+    vault: vault(),
     scheduleReminder: (botId, schedule, prompt) => {
       const row = scheduler!.add(botId, schedule, prompt, 'reminder')
       broadcast({ source: 'routines', routines: scheduler!.rows() })
@@ -436,6 +457,12 @@ app.whenReady().then(async () => {
     },
   })
   agent.events.on('event', (evt) => onAgentEvent(evt as EventEnvelope))
+  // Seed the vault (Documents/Red Sky), render the user profile from any
+  // durable facts already on disk, and fold existing threads into history so
+  // conversations that predate the vault still personalize future runs.
+  vault().init()
+  vault().syncProfile(agent.memory.list())
+  agent.importHistory()
   createWindow()
   broadcast({ source: 'status', state: 'starting', detail: 'starting OpenCode…' })
 
@@ -485,6 +512,8 @@ app.whenReady().then(async () => {
     const handle = await startServer()
     baseUrl = handle.baseUrl
     agent.attach(baseUrl)
+    // Have life tips ready before the first send needs one.
+    agent.warmTips()
     broadcast({ source: 'status', state: 'online', detail: `opencode · ${baseUrl}` })
     audit('runtime.online', { baseUrl })
   } catch (err) {

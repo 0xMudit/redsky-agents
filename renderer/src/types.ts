@@ -13,6 +13,7 @@ export type {
   FileNode,
   InitPayload,
   JobTemplate,
+  HistoryTurn,
   MemoryRow,
   ModelOption,
   NoticeKind,

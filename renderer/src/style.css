@@ -68,6 +68,12 @@
 
   color-scheme: dark;
   --shadow-lift: 0 18px 44px -24px rgba(0, 0, 0, 0.85);
+
+  /* Overlay helpers */
+  --glass-fill: rgba(255, 255, 255, 0.04);
+  --glass-fill-strong: rgba(255, 255, 255, 0.06);
+  --code-fill: rgba(0, 0, 0, 0.4);
+  --code-fill-soft: rgba(0, 0, 0, 0.35);
 }
 
 /* ── Accent themes. `data-theme` lives on <html>. ─────────── */
@@ -131,6 +137,74 @@
   --bubble-user: linear-gradient(135deg, #35c7e0 0%, #1f9fb8 100%);
   --bubble-user-solid: #35c7e0;
 }
+:root[data-theme="mainline"] {
+  --accent: #6f7885;
+  --accent-strong: #7e8896;
+  --accent-soft: #6f78851f;
+  --accent-glow: #6f788566;
+  --accent-ink: #0c0f13;
+  --fill-emphasis: #6f7885;
+  --text-accent: #aab4c3;
+  --border-accent: #6f78854d;
+  --bubble-user: linear-gradient(135deg, #525a67 0%, #7e8896 100%);
+  --bubble-user-solid: #6f7885;
+}
+
+/* ── Light mode. `data-mode` lives on <html> and sits last so
+     theme accents keep flowing while text and surfaces re-tint. ── */
+:root[data-mode="light"] {
+  color-scheme: light;
+
+  /* Type */
+  --text-primary: #1a1d23;
+  --text-secondary: #474d58;
+  --text-tertiary: #747b89;
+  --text-accent: color-mix(in srgb, var(--accent) 60%, #000);
+  --text-danger: #d6453a;
+  --text-success: #12896a;
+  --text-warning: #a9790f;
+
+  /* Surfaces */
+  --substrate: #f3f4f6;
+  --chat-fill: #fafafb;
+  --sidebar-tint: #ebedf0;
+  --panel-fill: #ffffff;
+  --bg-elevated: #ffffff;
+  --raised: #ffffff;
+  --bg-card: #0b0e1212;
+  --bg-card-hover: #0b0e1218;
+  --bg-tertiary: #0b0e120a;
+  --bg-active: #0b0e121a;
+  --bg-hover: #0b0e120c;
+  --border: #1c20283b;
+  --border-strong: #1c202851;
+  --border-accent: color-mix(in srgb, var(--accent) 42%, transparent);
+
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-glow: color-mix(in srgb, var(--accent) 32%, transparent);
+  --accent-ink: #ffffff;
+  --fill-secondary: #1c20281c;
+
+  /* Bubbles */
+  --bubble-user-ink: #ffffff;
+  --bubble-agent: #ffffff;
+  --bubble-agent-border: #1c202816;
+
+  /* Sidebar */
+  --sidebar-selected: #1c202817;
+  --sidebar-hover: #1c20280c;
+  --sidebar-text: #1c2028f0;
+  --sidebar-muted: #1c202888;
+  --sidebar-faint: #1c202852;
+
+  /* Overlay helpers */
+  --glass-fill: rgba(255, 255, 255, 0.62);
+  --glass-fill-strong: rgba(255, 255, 255, 0.78);
+  --code-fill: rgba(13, 15, 19, 0.85);
+  --code-fill-soft: rgba(13, 15, 19, 0.1);
+
+  --shadow-lift: 0 18px 44px -24px rgba(30, 40, 60, 0.45);
+}
 
 html, body, #root {
   height: 100%;
@@ -169,13 +243,13 @@ button {
 
 /* ── Glass panel ──────────────────────────────────────────── */
 .glass {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--glass-fill);
   backdrop-filter: blur(16px) saturate(160%);
   -webkit-backdrop-filter: blur(16px) saturate(160%);
   border: 0.5px solid var(--border);
 }
 .glass-strong {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--glass-fill-strong);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 0.5px solid var(--border-strong);
@@ -199,7 +273,7 @@ button {
 .markdown-body ol { list-style: decimal; padding-left: 1.5em; margin: 0.4em 0; }
 .markdown-body ul { list-style: disc; padding-left: 1.5em; margin: 0.4em 0; }
 .markdown-body pre {
-  background: rgba(0,0,0,0.4);
+  background: var(--code-fill);
   border: 0.5px solid var(--border);
   border-radius: 12px;
   padding: 12px 14px;
@@ -209,7 +283,7 @@ button {
 .markdown-body code {
   font-family: var(--mono);
   font-size: 0.875em;
-  background: rgba(0,0,0,0.35);
+  background: var(--code-fill-soft);
   border-radius: 5px;
   padding: 1px 5px;
   border: 0.5px solid var(--border);
@@ -482,13 +556,105 @@ button {
   position: absolute;
   inset: -1px;
   border-radius: 17px;
-  padding: 1px;
-  background: conic-gradient(from 0deg, #f4513f, #f0d36c, #54b9a6, #6464ef, #f4513f);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: spin-slow 4s linear infinite;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 35%, transparent);
+  animation: composer-breathe 2.4s var(--ease-out) infinite;
   pointer-events: none;
+}
+@keyframes composer-breathe {
+  0%, 100% {
+    opacity: 0.45;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+  50% {
+    opacity: 0.85;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+}
+
+/* ── Setup spinner ────────────────────────────────────────── */
+.setup-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: conic-gradient(from 0deg, transparent 0 300deg, var(--accent) 360deg);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  animation: spin-slow 0.9s linear infinite;
+  filter: drop-shadow(0 0 6px var(--accent-glow));
+}
+.setup-ring-2 {
+  inset: 7px;
+  opacity: 0.45;
+  animation-duration: 1.5s;
+  animation-direction: reverse;
+}
+
+/* ── Working window (life tip while an agent runs) ────────── */
+.work-window {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 22rem;
+  padding: 11px 14px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--bg-card);
+  border: 0.5px solid var(--border);
+}
+.work-window::after {
+  content: "";
+  position: absolute;
+  top: -45%;
+  right: -14%;
+  width: 150px;
+  height: 150px;
+  border-radius: 999px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--work-tint, var(--accent)) 40%, transparent), transparent 70%);
+  opacity: 0.45;
+  pointer-events: none;
+}
+.work-orbit {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: none;
+}
+.work-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--work-tint, var(--accent)) 22%, transparent);
+  border-top-color: var(--work-tint, var(--accent));
+  animation: work-spin 0.9s linear infinite;
+}
+.work-ring-2 {
+  inset: 6px;
+  border-color: transparent;
+  border-bottom-color: color-mix(in srgb, var(--work-tint, var(--accent)) 70%, transparent);
+  animation-direction: reverse;
+  animation-duration: 1.5s;
+}
+.work-core {
+  position: absolute;
+  inset: 12px;
+  border-radius: 999px;
+  background: var(--work-tint, var(--accent));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--work-tint, var(--accent)) 55%, transparent);
+  animation: work-pulse 1.6s ease-in-out infinite;
+}
+@keyframes work-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes work-pulse {
+  0%, 100% { transform: scale(0.78); opacity: 0.7; }
+  50%      { transform: scale(1.12); opacity: 1; }
+}
+.tip-in { animation: tip-in 0.4s var(--ease-out) both; }
+@keyframes tip-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
 }
 
 /* ── Modals ───────────────────────────────────────────────── */
@@ -530,6 +696,81 @@ button {
 .bot-row-active {
   background: linear-gradient(90deg, var(--accent-soft) 0%, var(--bg-active) 100%) !important;
   border: 0.5px solid var(--border-accent) !important;
+}
+
+/* Hide the "more" affordance until the row is hovered or focused. */
+.rs-bot-menu-btn {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--sidebar-muted);
+  background: var(--bg-tertiary);
+  border: 0.5px solid var(--border);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-out);
+}
+.rs-bot-row:hover .rs-bot-menu-btn,
+.rs-bot-row:focus-within .rs-bot-menu-btn { opacity: 1; }
+.rs-bot-menu-btn:hover { background: var(--sidebar-hover); color: var(--text-primary); }
+
+.rs-bot-dragging { opacity: 0.45; }
+
+.rs-drop-before::before,
+.rs-drop-after::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.rs-drop-before::before { top: -1px; }
+.rs-drop-after::after { bottom: -1px; }
+
+/* ── Context menu ─────────────────────────────────────────── */
+.rs-menu {
+  position: fixed;
+  z-index: 70;
+  min-width: 196px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  border: 0.5px solid var(--border);
+  box-shadow: 0 12px 34px -10px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.25);
+  animation: rise-in var(--dur-2) var(--ease-out) both;
+}
+.rs-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.rs-menu-item:hover { background: var(--bg-hover); }
+.rs-menu-danger { color: var(--text-danger); }
+.rs-menu-icon { display: inline-flex; width: 16px; }
+.rs-menu-check { color: var(--accent); font-size: 11px; }
+.rs-menu-sep {
+  height: 0.5px;
+  margin: 4px 8px;
+  background: var(--border);
 }
 
 /* ── Agent avatar glow ────────────────────────────────────── */

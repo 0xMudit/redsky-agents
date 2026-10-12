@@ -15,6 +15,12 @@ interface ChatReply {
   error?: string
 }
 
+const TIP_ASK =
+  'Write one short, specific, original tip for getting better at life. ' +
+  'One sentence, at most 16 words. No preamble, no numbering, no quotation marks.'
+
+const TIP_FALLBACK = 'Small steps repeated daily beat big plans you never start.'
+
 /**
  * The web build's bridge. It reuses the desktop demo adapter for every local,
  * stateless concern (agents, memory, rooms, settings, …) but swaps the reply
@@ -32,10 +38,15 @@ export function createWebApi(): RedSkyApi {
           content: m.role === 'assistant' ? stripThinking(m.text) : m.text,
         }))
 
+      const [remembered, settings] = await Promise.all([base.listMemories(bot.id), base.getSettings()])
+      const memory = remembered
+        .filter((m) => m.key?.trim() && m.value?.trim())
+        .map((m) => `${m.key}: ${m.value}`)
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messages, name: bot.name, job: bot.job, model }),
+        body: JSON.stringify({ messages, name: bot.name, job: bot.job, model, memory, userName: settings.userName }),
       })
       const data = (await res.json().catch(() => ({}))) as ChatReply
       if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status})`)
@@ -47,5 +58,28 @@ export function createWebApi(): RedSkyApi {
     ...base,
     init: async (): Promise<InitPayload> => ({ ...(await base.init()), models: GROQ_MODELS }),
     models: async () => GROQ_MODELS,
+    // Real model-written tips through the same server route that powers chat.
+    lifeTip: async () => {
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            name: 'Life coach',
+            job: 'Give one short, concrete tip for getting better at life.',
+            messages: [{ role: 'user', content: TIP_ASK }],
+          }),
+        })
+        const data = (await res.json().catch(() => ({}))) as ChatReply
+        if (!res.ok || data.error) return TIP_FALLBACK
+        const line = (data.text ?? '')
+          .split(/\r?\n/)
+          .map((s) => s.trim().replace(/^["'`“”]+|["'`“”]+$/g, ''))
+          .find((s) => s.length >= 12)
+        return line ?? TIP_FALLBACK
+      } catch {
+        return TIP_FALLBACK
+      }
+    },
   }
 }

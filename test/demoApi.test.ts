@@ -123,6 +123,56 @@ describe('demoApi change detection', () => {
     assert.notEqual(events[0], before)
   })
 
+  it('addMemory persists across reloads and takes a per-bot scope', async () => {
+    useStorage()
+    const api = createDemoApi()
+    const bot = await api.createBot({ name: 'Scoped' })
+
+    await api.addMemory({ key: 'tone', value: 'prefers short emails', botId: bot.id })
+    await api.addMemory({ key: 'boss', value: 'Priya', botId: bot.id })
+    await sleep()
+
+    const init = await createDemoApi().init()
+    assert.equal(init.memories.length, 2)
+
+    const reloaded = createDemoApi()
+    const scoped = await reloaded.listMemories(bot.id)
+    assert.equal(scoped.length, 2)
+    assert.equal(scoped[0].key, 'boss')
+    assert.equal((await reloaded.listMemories('other_bot')).length, 0)
+  })
+
+  it('deleteMemory and clearMemories remove rows', async () => {
+    useStorage()
+    const api = createDemoApi()
+    const added = await api.addMemory({ key: 'a', value: 'b' })
+    await api.addMemory({ key: 'c', value: 'd' })
+
+    await api.deleteMemory(added.id)
+    assert.equal((await api.listMemories()).length, 1)
+
+    await api.clearMemories()
+    assert.equal((await api.listMemories()).length, 0)
+  })
+
+  it('listHistory flattens threads newest-first, tagged with the settings user', async () => {
+    useStorage()
+    const api = createDemoApi()
+    await api.updateSettings({ userName: 'Mudit' })
+    const bot = await api.createBot({ name: 'Recorder' })
+    await api.send(bot.id, { text: 'first message' })
+
+    const history = await api.listHistory()
+    assert.equal(history.length, 3, 'seeded demo thread plus the new turn')
+    assert.equal(history[0].botId, bot.id, 'newest turn listed first')
+    const mine = history.filter((t) => t.botId === bot.id)
+    assert.equal(mine.length, 1)
+    assert.equal(mine[0].text, 'first message')
+    assert.equal(mine[0].role, 'user')
+    assert.equal(mine[0].user, 'Mudit')
+    assert.equal(mine[0].botName, 'Recorder')
+  })
+
   it('renaming and flagging swap the object in the list', async () => {
     useStorage()
     const api = createDemoApi()
@@ -132,5 +182,22 @@ describe('demoApi change detection', () => {
     const listed = (await api.listBots()).find((b) => b.id === bot.id)
     assert.equal(listed, renamed, 'the list must hold the new object')
     assert.equal(listed?.name, 'New')
+  })
+
+  it('reorderBots assigns a sequential order and persists it', async () => {
+    useStorage()
+    const api = createDemoApi()
+    const a = await api.createBot({ name: 'A' })
+    const b = await api.createBot({ name: 'B' })
+    const c = await api.createBot({ name: 'C' })
+
+    const updated = await api.reorderBots([c.id, a.id, b.id])
+    assert.equal(updated.find((x) => x.id === c.id)?.order, 0)
+    assert.equal(updated.find((x) => x.id === a.id)?.order, 1)
+    assert.equal(updated.find((x) => x.id === b.id)?.order, 2)
+
+    await sleep()
+    const reloaded = await createDemoApi().init()
+    assert.equal(reloaded.bots.find((x) => x.id === c.id)?.order, 0)
   })
 })

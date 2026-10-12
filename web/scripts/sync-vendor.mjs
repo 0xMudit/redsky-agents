@@ -19,13 +19,24 @@ const copies = [
   [path.join(repoRoot, 'shared'), path.join(vendor, 'shared')],
 ]
 
+const missing = copies.filter(([from]) => !existsSync(from))
+
+// The desktop sources live one level up in the repo. A Vercel CLI deploy
+// uploads only web/, so on the build machine those paths don't exist — keep the
+// vendored copy that was uploaded instead (it matches ../renderer/src at build
+// time). Normal local and git-based builds still re-sync from source.
+if (missing.length) {
+  if (existsSync(vendor) && existsSync(path.join(vendor, 'renderer', 'src'))) {
+    console.warn(`[sync-vendor] sources not found (${missing.map(([from]) => from).join(', ')}); keeping uploaded vendor copy`)
+    process.exit(0)
+  }
+  console.error(`[sync-vendor] missing source directory: ${missing[0][0]}`)
+  process.exit(1)
+}
+
 await rm(vendor, { recursive: true, force: true })
 
 for (const [from, to] of copies) {
-  if (!existsSync(from)) {
-    console.error(`[sync-vendor] missing source directory: ${from}`)
-    process.exit(1)
-  }
   await mkdir(path.dirname(to), { recursive: true })
   await cp(from, to, { recursive: true })
 }

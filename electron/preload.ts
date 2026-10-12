@@ -8,9 +8,11 @@ const redsky = {
   duplicateBot: (botId: string) => ipcRenderer.invoke('rs:duplicateBot', botId),
   setBotFlags: (botId: string, flags: { pinned?: boolean; archived?: boolean }) =>
     ipcRenderer.invoke('rs:setBotFlags', botId, flags),
+  reorderBots: (orderedIds: string[]) => ipcRenderer.invoke('rs:reorderBots', orderedIds),
   branchFrom: (botId: string, messageId: string, model?: string) =>
     ipcRenderer.invoke('rs:branchFrom', botId, messageId, model),
   search: (query: string) => ipcRenderer.invoke('rs:search', query),
+  lifeTip: () => ipcRenderer.invoke('rs:lifeTip'),
   send: (botId: string, payload: { text: string; model?: string; roomId?: string }) =>
     ipcRenderer.invoke('rs:send', botId, payload),
   abortBot: (botId: string) => ipcRenderer.invoke('rs:abortBot', botId),
@@ -30,6 +32,7 @@ const redsky = {
   addMemory: (payload: { key: string; value: string; botId?: string }) => ipcRenderer.invoke('rs:addMemory', payload),
   deleteMemory: (id: string) => ipcRenderer.invoke('rs:deleteMemory', id),
   clearMemories: () => ipcRenderer.invoke('rs:clearMemories'),
+  listHistory: (user?: string) => ipcRenderer.invoke('rs:listHistory', user),
   listRoutines: () => ipcRenderer.invoke('rs:listRoutines'),
   addRoutine: (payload: { botId: string; schedule: string; prompt: string; origin?: 'manual' | 'taught' }) =>
     ipcRenderer.invoke('rs:addRoutine', payload),

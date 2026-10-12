@@ -25,12 +25,22 @@ const TEMPLATES: JobTemplate[] = [
   { name: 'Chief of Staff', job: 'Coordinate work across other bots.' },
 ]
 
+const DEMO_TIPS: string[] = [
+  'Small steps repeated daily beat big plans you never start.',
+  'Protect one hour of deep focus before the world wakes up.',
+  'Name the next physical action — vagueness is what stalls you.',
+  'Spend on things that save you time, not things that fill it.',
+  'Ask one more question than feels comfortable in every conversation.',
+  'Sleep is the cheapest performance upgrade you will ever get.',
+]
+
 const DEFAULT_SETTINGS: AppSettings = {
   version: 1,
   privacyMode: true,
   autoReview: 'sensitive',
   allowBotHandoff: true,
   maxParallelBots: 8,
+  userName: undefined,
 }
 
 /** Bumped when the persisted shape changes, so stale snapshots are discarded. */
@@ -45,6 +55,7 @@ interface DemoSnapshot {
   connectors: Connector[]
   rooms: Room[]
   notices: AppNotice[]
+  memories: MemoryRow[]
 }
 
 /** localStorage survives reloads but private mode forbids access; treat every call as fallible. */
@@ -81,8 +92,12 @@ export interface DemoApiOptions {
 }
 
 export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
-  const HUES = ['#54B9A6', '#F19D38', '#6464EF', '#885CF5', '#3C82F6', '#ED712E', '#EC4899', '#10B981']
-  const now = Date.now()
+const HUES = ['#54B9A6', '#F19D38', '#6464EF', '#885CF5', '#3C82F6', '#ED712E', '#EC4899', '#10B981']
+// Date.now() alone collides when several agents are created within the same
+// millisecond (rapid clicks, or tests). A per-process counter keeps ids unique.
+let idSeq = 0
+const demoId = (): string => `demo_${Date.now().toString(36)}_${(idSeq++).toString(36)}`
+const now = Date.now()
   const storage = resolveStorage(opts.persist)
   const storageKey = opts.storageKey ?? DEFAULT_STORE_KEY
 
@@ -102,7 +117,7 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   const persist = (): void => {
     if (!storage) return
-    const snapshot: DemoSnapshot = { version: STORE_VERSION, bots, settings, connectors, rooms, notices }
+    const snapshot: DemoSnapshot = { version: STORE_VERSION, bots, settings, connectors, rooms, notices, memories }
     try {
       storage.setItem(storageKey, JSON.stringify(snapshot))
     } catch {
@@ -150,6 +165,7 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
       ]
   let rooms: Room[] = seeded?.rooms ?? []
   let notices: AppNotice[] = seeded?.notices ?? []
+  let memories: MemoryRow[] = seeded?.memories?.length ? seeded.memories : []
   const listeners = new Set<(evt: EventEnvelope) => void>()
   const emit = (evt: EventEnvelope) => {
     scheduleSave()
@@ -167,6 +183,12 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
   }
   const models: ModelOption[] = [{ id: 'demo', label: 'Local', isDefault: true }]
 
+  // Mirror the desktop store: once a manual order exists, new agents land on top.
+  const topOrder = (): { order?: number } => {
+    const orders = bots.map((b) => b.order).filter((o): o is number => typeof o === 'number')
+    return orders.length ? { order: Math.min(...orders) - 1 } : {}
+  }
+
   return {
     init: async (): Promise<InitPayload> => ({
       status: 'online',
@@ -175,7 +197,7 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
       logs: '',
       models,
       bots,
-      memories: [],
+      memories,
       routines: [],
       templates: TEMPLATES,
       connectors,
@@ -187,7 +209,7 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     models: async () => models,
     createBot: async (payload) => {
       const bot: Bot = {
-        id: `demo_${Date.now()}`,
+        id: demoId(),
         name: payload?.name || 'New agent',
         job: payload?.job || '',
         hue: HUES[bots.length % HUES.length],
@@ -198,6 +220,7 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
         computer: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        ...topOrder(),
       }
       bots = [bot, ...bots]
       emit({ source: 'bot', bot })
@@ -210,7 +233,7 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     duplicateBot: async (botId) => {
       const src = bots.find((b) => b.id === botId)!
       const bot: Bot = {
-        id: `demo_${Date.now()}`,
+        id: demoId(),
         name: `${src.name} copy`,
         job: src.job,
         hue: HUES[bots.length % HUES.length],
@@ -221,6 +244,7 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
         computer: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        ...topOrder(),
       }
       bots = [bot, ...bots]
       emit({ source: 'bot', bot })
@@ -234,11 +258,18 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
         updatedAt: Date.now(),
       })
     },
+    reorderBots: async (orderedIds) => {
+      orderedIds.forEach((id, i) => {
+        const bot = bots.find((b) => b.id === id)
+        if (bot && bot.order !== i) patchBot(bot, { order: i })
+      })
+      return bots
+    },
     branchFrom: async (botId, messageId) => {
       const src = bots.find((b) => b.id === botId)!
       const asked = [...src.thread].reverse().find((m) => m.id === messageId && m.role === 'user')
       const bot: Bot = {
-        id: `demo_${Date.now()}`,
+        id: demoId(),
         name: `${src.name} · take`,
         job: src.job,
         hue: src.hue,
@@ -250,6 +281,7 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
         parentId: src.id,
         createdAt: Date.now(),
         updatedAt: Date.now(),
+        ...topOrder(),
       }
       bots = [bot, ...bots]
       emit({ source: 'bot', bot })
@@ -257,6 +289,8 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     },
     // The browser demo has no workspace to search.
     search: async () => [],
+    // No model in the plain demo — serve a rotating sample tip.
+    lifeTip: async () => DEMO_TIPS[Math.floor(Math.random() * DEMO_TIPS.length)],
     send: async (botId, payload) => {
       const bot = bots.find((b) => b.id === botId)!
       let next = patchBot(bot, {
@@ -312,11 +346,52 @@ export function createDemoApi(opts: DemoApiOptions = {}): RedSkyApi {
     permission: async () => ({ ok: true }),
     files: async () => [],
     fileContent: async () => '',
-    listMemories: async () => [],
-    addMemory: async (payload) =>
-      ({ id: `${Date.now()}`, key: payload.key, value: payload.value, createdAt: Date.now(), updatedAt: Date.now() }) as MemoryRow,
-    deleteMemory: async () => ({ ok: true }),
-    clearMemories: async () => ({ ok: true }),
+    listMemories: async (botId) =>
+      memories
+        .filter((m) => !botId || !m.botId || m.botId === botId)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((m) => ({ ...m })),
+    addMemory: async (payload) => {
+      const now = Date.now()
+      const row: MemoryRow = {
+        id: `mem_${now}_${Math.random().toString(36).slice(2, 6)}`,
+        key: payload.key,
+        value: payload.value,
+        botId: payload.botId,
+        createdAt: now,
+        updatedAt: now,
+      }
+      memories = [row, ...memories]
+      scheduleSave()
+      return row
+    },
+    deleteMemory: async (id) => {
+      memories = memories.filter((m) => m.id !== id)
+      scheduleSave()
+      return { ok: true }
+    },
+    clearMemories: async () => {
+      memories = []
+      scheduleSave()
+      return { ok: true }
+    },
+    listHistory: async () =>
+      bots
+        .flatMap((b) =>
+          (b.thread ?? [])
+            .filter((m) => m.text?.trim())
+            .map((m, i) => ({
+              id: m.id ?? `${b.id}_${m.at ?? 0}_${i}`,
+              at: m.at ?? b.createdAt,
+              role: m.role === 'system' ? ('system' as const) : m.role,
+              text: m.text,
+              botId: b.id,
+              botName: b.name,
+              user: settings.userName,
+            })),
+        )
+        .sort((a, b) => a.at - b.at)
+        .reverse(),
     listRoutines: async () => [] as Routine[],
     addRoutine: async (payload) => ({ id: `${Date.now()}`, ...payload, enabled: true }),
     removeRoutine: async () => ({ ok: true }),
