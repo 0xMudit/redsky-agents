@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test'
 import { createAgent, type AgentHandle } from '../electron/agent'
+import { createFederationStore } from '../electron/cloud/federation'
 import { createConnectorStore } from '../electron/connectors'
 import { createRoomStore } from '../electron/rooms'
 import { createSettingsStore } from '../electron/settings'
@@ -436,6 +437,53 @@ describe('agent — conversation vault', () => {
     // Idempotent — a second run imports nothing new and leaves nothing doubled.
     assert.equal(a.importHistory(), 0)
     assert.equal(vault.turns(bot.id).length, 2)
+  })
+
+  it('folds facts other bots learned into the system prompt', async () => {
+    const federation = createFederationStore()
+    federation.publish({ key: 'tone', value: 'always terse', sourceBotId: 'bot_other' })
+    const a = createAgent({
+      connectors: createConnectorStore(),
+      rooms: createRoomStore(),
+      settings: createSettingsStore(),
+      scheduleReminder: () => ({ id: 'r', botId: '', schedule: '', prompt: '', enabled: true, origin: 'reminder' as const }),
+      cancelReminders: () => 0,
+      federation,
+    })
+    a.attach(srv.baseUrl)
+    const bot = await a.createBot({ name: 'Federated' })
+    await a.send(bot.id, { text: 'hello team' })
+
+    const system = String((srv.prompts.at(-1)?.body as { system?: string } | undefined)?.system ?? '')
+    assert.match(system, /Shared across the team/)
+    assert.match(system, /always terse/)
+  })
+
+  it('publishes a fact the bot learns so the fleet can reuse it', async () => {
+    const federation = createFederationStore()
+    const a = createAgent({
+      connectors: createConnectorStore(),
+      rooms: createRoomStore(),
+      settings: createSettingsStore(),
+      scheduleReminder: () => ({ id: 'r', botId: '', schedule: '', prompt: '', enabled: true, origin: 'reminder' as const }),
+      cancelReminders: () => 0,
+      federation,
+    })
+    a.attach(srv.baseUrl)
+    const bot = await a.createBot({ name: 'Learner' })
+
+    await a.send(bot.id, { text: 'remember the codename' })
+    serverEvents.emit('event', {
+      type: 'message.part.delta',
+      properties: { sessionID: bot.sessionId, partID: 'fed_p1', delta: 'Noted for next time: the launch codename is falcon.' },
+    })
+    serverEvents.emit('event', { type: 'session.idle', properties: { sessionID: bot.sessionId } })
+    await waitForBot(a, (b) => b.id === bot.id && b.status === 'idle')
+
+    assert.ok(
+      federation.list().some((f) => f.value.includes('falcon') && f.sourceBotId === bot.id),
+      'the learned fact should be published to the shared layer',
+    )
   })
 
   it('tags turns recorded during a normal run with the settings user', async () => {

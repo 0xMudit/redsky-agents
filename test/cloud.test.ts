@@ -4,8 +4,8 @@ import * as fs from 'node:fs'
 import { createComputerStore } from '../electron/cloud/computer'
 import { createDeviceStore } from '../electron/cloud/devices'
 import { createFederationStore, factVisibleTo } from '../electron/cloud/federation'
-import { createHandoffStore } from '../electron/cloud/handoff'
-import { createRecordingStore, draftRoutineFromRecording } from '../electron/cloud/recording'
+import { createHandoffStore, reciprocalInFlight } from '../electron/cloud/handoff'
+import { captureRecordingSteps, createRecordingStore, draftRoutineFromRecording } from '../electron/cloud/recording'
 import { createCloudRuntime, createHostedRuntime, createLocalRuntime } from '../electron/cloud/runtime'
 import { cleanupTempHomes, useTempHome } from './helpers'
 
@@ -128,6 +128,31 @@ describe('recording store', () => {
     store.markRoutine(second.id, 'job_1')
     assert.equal(store.get(second.id)?.routineId, 'job_1')
   })
+
+  it('captures each feed event and user prompt exactly once, in time order', () => {
+    const seenComputer = new Set<string>()
+    const seenThread = new Set<string>()
+    const feed = {
+      computer: [
+        { id: 'c1', kind: 'tool', title: 'run tool', detail: '', at: 3 },
+        { id: 'c2', kind: 'handoff', title: 'asked Bob', detail: '', at: 4 },
+      ],
+      thread: [
+        { id: 'm1', role: 'assistant', text: 'not a step', at: 2 },
+        { id: 'm2', role: 'user', text: 'do the thing', at: 1 },
+      ],
+    }
+
+    const first = captureRecordingSteps({ ...feed, seenComputer, seenThread })
+    // User prompt sorts before the tool/handoff feed events; assistant ignored.
+    assert.deepEqual(
+      first.map((s) => [s.kind, s.title]),
+      [['prompt', 'prompt'], ['tool', 'run tool'], ['note', 'asked Bob']],
+    )
+
+    // A second pass over the same snapshot yields nothing new.
+    assert.equal(captureRecordingSteps({ ...feed, seenComputer, seenThread }).length, 0)
+  })
 })
 
 describe('handoff store', () => {
@@ -152,6 +177,19 @@ describe('handoff store', () => {
     const store = createHandoffStore()
     assert.throws(() => store.queue({ fromBotId: 'bot_a', toBotId: 'bot_a', prompt: 'me' }), /itself/)
     assert.throws(() => store.queue({ fromBotId: 'bot_a', toBotId: 'bot_b', prompt: '  ' }), /prompt required/)
+  })
+
+  it('flags a reciprocal handoff that is still in flight', () => {
+    useTempHome()
+    const store = createHandoffStore()
+    const ab = store.queue({ fromBotId: 'bot_a', toBotId: 'bot_b', prompt: 'take it' })
+    // A→B is queued, so B→A would loop.
+    assert.equal(reciprocalInFlight(store.list(), 'bot_b', 'bot_a'), true)
+    // The reverse is not a cycle yet.
+    assert.equal(reciprocalInFlight(store.list(), 'bot_a', 'bot_c'), false)
+
+    store.transition(ab.id, 'done')
+    assert.equal(reciprocalInFlight(store.list(), 'bot_b', 'bot_a'), false)
   })
 })
 

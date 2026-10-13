@@ -44,10 +44,10 @@ The current runtime is local; see `cloud.status()` from the renderer.
 | 2 | 24/7 runtime | `cloud/runtime.ts` | `cloudStatus` | Local: works. Hosted: stub |
 | 3 | Desktop + iOS clients | `cloud/devices.ts` | `registerDevice`, `removeDevice`, `listDevices` | Registry: works. iOS app: TODO |
 | 4 | Multi-bot collaboration | `rooms.ts` + `cloud/handoff.ts` | existing rooms + `queueHandoff`, `listHandoffs` | Rooms: works. Durable handoff: works locally |
-| 5 | Teach by showing | `cloud/recording.ts` | `startRecording`, `captureRecording`, `stopRecording`, `saveRecordingAsRoutine` | Capture: manual. Live capture: TODO |
+| 5 | Teach by showing | `cloud/recording.ts` + `agent.ts` | `startRecording`, `captureRecording`, `stopRecording`, `saveRecordingAsRoutine` | Live capture: works. Editing a draft: TODO |
 | 6 | Scheduled routines | `scheduler.ts` (+ #5) | existing routines + `saveRecordingAsRoutine` | In-process. 24/7 scheduling: TODO |
-| 7 | Cross-bot learning | `cloud/federation.ts` + `memory.ts` | `publishFact`, `listFederated`, `forgetFact` | Store: works. Prompt injection: TODO |
-| 8 | Bot-to-bot handoffs | `cloud/handoff.ts` + `collab.ts` | `queueHandoff`, `listHandoffs` | Queue: works. Auto-dispatch: TODO |
+| 7 | Cross-bot learning | `cloud/federation.ts` + `memory.ts` | `publishFact`, `listFederated`, `forgetFact` | Prompt injection: works. Share controls: TODO |
+| 8 | Bot-to-bot handoffs | `cloud/handoff.ts` + `collab.ts` | `queueHandoff`, `listHandoffs` | Auto-dispatch + loop guard: works. Retry/UI: TODO |
 
 Shared shapes live in `shared/cloud.ts`; the renderer sees them re-exported from `shared/types.ts`. New stores
 follow the `JsonStore` pattern in `electron/lib/persist.ts` and land in `userData` (listed in
@@ -119,16 +119,17 @@ builds a handoff prompt. The new `HandoffStore` adds a durable record of who pas
 
 ## 5. Teach by showing
 
-**Today.** A recording is an ordered list of steps. `draftRoutineFromRecording()` (pure, tested) turns it into
-the prompt a routine should replay, and `saveRecordingAsRoutine` pairs it with a schedule from the existing
-scheduler.
+**Today.** A recording is an ordered list of steps. Starting one seeds a per-bot cursor in `main.ts`, and every
+bot event diffs new activity into steps through `captureRecordingSteps()` (pure, tested) — user prompts and
+`ComputerEvent`s (tools, files, shell, handoffs) are captured live, in time order, each exactly once.
+`draftRoutineFromRecording()` (pure, tested) turns the result into the prompt a routine replays, and
+`saveRecordingAsRoutine` pairs it with a schedule from the existing scheduler.
 
-**Files.** `electron/cloud/recording.ts` (`RecordingStore`, `draftRoutineFromRecording`).
+**Files.** `electron/cloud/recording.ts` (`RecordingStore`, `captureRecordingSteps`, `draftRoutineFromRecording`),
+`electron/main.ts` (cursor seeding + `captureForRecording`).
 
 **Left to do.**
 
-- Capture live: feed `capture()` from the same events the activity feed uses (`ComputerEvent` in
-  `electron/agent.ts`), so showing a bot a task records it without the caller instrumenting anything.
 - Let the preview be edited before it becomes a routine (drop steps, reorder, annotate).
 - Generalize the prompt composition once real recordings exist; the current heuristic is intentionally simple.
 
@@ -149,14 +150,14 @@ capability predates the cloud work; the cloud angle is making routines fire when
 
 **Today.** `memory.ts` harvests durable facts per bot. `FederationStore` is the shared layer above it: a fact
 can be published fleet-wide or to a chosen set, and `factVisibleTo()` (pure, tested) is the read rule — a bot
-always sees what it learned, and a fact with no `sharedWith` is public.
+always sees what it learned, and a fact with no `sharedWith` is public. The agent wires both directions: facts it
+harvests are auto-published (`harvestAndTeach`), and facts other bots learned are folded into `buildSystem()` so a
+bot actually *uses* the fleet's knowledge.
 
-**Files.** `electron/cloud/federation.ts` + `electron/memory.ts`.
+**Files.** `electron/cloud/federation.ts` + `electron/memory.ts` + `electron/agent.ts`.
 
 **Left to do.**
 
-- Fold visible federated facts into an agent's system prompt (`buildSystem()` in `electron/agent.ts`) so a bot
-  actually *uses* another bot's knowledge.
 - Promote/demote: let a memory be shared or kept private.
 - Dedupe and conflict resolution when two bots publish the same key.
 
@@ -164,15 +165,16 @@ always sees what it learned, and a fact with no `sharedWith` is public.
 
 **Today.** Inline handoff works (`collab.ts`): an `@Name` mention fires the target in the same run. The new
 `HandoffStore` makes a handoff durable with a lifecycle (`queued → accepted → done | failed`) so it can outlive
-the run and, later, the process — a hosted receiver can pick it up.
+the run and, later, the process — a hosted receiver can pick it up. Queuing a handoff now **auto-dispatches** it
+(`main.ts`: `dispatchHandoff`) to an idle target when `settings.allowBotHandoff` is on, marks it `done` when the
+target goes idle, and drains the next queued one. `reciprocalInFlight()` (pure, tested) blocks an A→B→A cycle by
+failing the second handoff with a note.
 
-**Files.** `electron/cloud/handoff.ts`, `electron/collab.ts`.
+**Files.** `electron/cloud/handoff.ts`, `electron/collab.ts`, `electron/main.ts`.
 
 **Left to do.**
 
-- Auto-dispatch: when a handoff is queued, deliver it to the target and move it to `accepted/done`, respecting
-  `settings.allowBotHandoff`.
-- Loop protection (A→B→A cycles) and a max-depth guard.
+- A max-depth guard for chains the reciprocal check cannot see (handoffs nested via `@Name` rather than queued).
 - Cancel/retry, and a UI showing the fleet's in-flight handoffs.
 - Point the store at the hosted bus when `kind === 'hosted'`.
 
@@ -209,7 +211,9 @@ Push events (`rs:event`): `cloud`, `computers`, `devices`, `recordings`, `handof
 ## Tests
 
 `test/cloud.test.ts` covers the runtime factory and stubs, the computer/device/recording/handoff/federation
-stores, and the two pure helpers (`draftRoutineFromRecording`, `factVisibleTo`). Run `npm test`.
+stores, and the pure helpers (`draftRoutineFromRecording`, `captureRecordingSteps`, `reciprocalInFlight`,
+`factVisibleTo`). `test/agent.test.ts` covers the agent wiring: learned facts get published, and other bots'
+facts reach the system prompt. Run `npm test`.
 
 ## Ground rules
 

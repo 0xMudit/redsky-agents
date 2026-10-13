@@ -6,9 +6,10 @@ import { audit } from './audit'
 import { createConnectorStore } from './connectors'
 import { createComputerStore } from './cloud/computer'
 import { createDeviceStore } from './cloud/devices'
+import { buildHandoffPrompt } from './collab'
 import { createFederationStore } from './cloud/federation'
-import { createHandoffStore } from './cloud/handoff'
-import { createRecordingStore, draftRoutineFromRecording } from './cloud/recording'
+import { createHandoffStore, reciprocalInFlight } from './cloud/handoff'
+import { captureRecordingSteps, createRecordingStore, draftRoutineFromRecording } from './cloud/recording'
 import { createLocalRuntime } from './cloud/runtime'
 import { createLogger } from './lib/logger'
 import { listModels } from './models'
@@ -24,7 +25,7 @@ import { checkOpenCode, composeFeedbackUrl, redactedLogTail } from './beta'
 import { previewOf } from '../shared/visible'
 import type { ModelRef } from './http'
 import type { AppSettings, Bot, ConnectorStatus, EventEnvelope, NoticeKind } from '../shared/types'
-import type { DevicePlatform, RecordingStep } from '../shared/cloud'
+import type { DevicePlatform, Handoff, RecordingStep } from '../shared/cloud'
 
 let mainWindow: BrowserWindow | null = null
 let baseUrl = ''
@@ -42,6 +43,13 @@ let handoffStore: ReturnType<typeof createHandoffStore> | undefined
 let federationStore: ReturnType<typeof createFederationStore> | undefined
 const cloudRuntime = createLocalRuntime()
 const lastBotStatus = new Map<string, Bot['status']>()
+// Live recording capture: per-bot cursor of which feed events a running
+// recording has already turned into steps. Seeded when recording starts so only
+// new activity is captured, then diffed on every bot event.
+const recCursors = new Map<string, { id: string; seenComputer: Set<string>; seenThread: Set<string> }>()
+// Auto-dispatched handoffs: which handoff a bot is currently working on, so its
+// completion can be marked when the bot goes idle again.
+const dispatchedHandoff = new Map<string, string>()
 const log = createLogger()
 
 function settings(): ReturnType<typeof createSettingsStore> {
@@ -90,15 +98,96 @@ function pushNotice(bot: Bot, kind: NoticeKind, title: string, body: string, alw
   }
 }
 
+/** Fold new activity on an actively-recorded bot into its recording. */
+function captureForRecording(bot: Bot): void {
+  const active = recordings().active(bot.id)
+  const cursor = recCursors.get(bot.id)
+  if (!active) {
+    if (cursor) recCursors.delete(bot.id)
+    return
+  }
+  const state =
+    cursor && cursor.id === active.id
+      ? cursor
+      : { id: active.id, seenComputer: new Set<string>(), seenThread: new Set<string>() }
+  recCursors.set(bot.id, state)
+  const steps = captureRecordingSteps({
+    computer: bot.computer,
+    thread: bot.thread,
+    seenComputer: state.seenComputer,
+    seenThread: state.seenThread,
+  })
+  if (!steps.length) return
+  for (const step of steps) {
+    try {
+      recordings().capture(active.id, step)
+    } catch {
+      /* the recording was stopped under us */
+    }
+  }
+  broadcast({ source: 'recordings', recordings: recordings().list() })
+}
+
+/** Launch a queued handoff at its target, once the target is free. */
+function dispatchHandoff(row: Handoff): void {
+  const a = agent
+  if (!a) return
+  const target = a.getBot(row.toBotId)
+  if (!target || target.status === 'running') return
+  const from = a.getBot(row.fromBotId)
+  const tail = (from?.thread ?? [])
+    .slice(-6)
+    .map((m) => `${m.role}: ${m.text}`)
+    .join('\n')
+    .slice(0, 2000)
+  const prompt = buildHandoffPrompt({
+    fromName: from?.name ?? 'another bot',
+    fromJob: from?.job ?? '',
+    remainder: row.prompt,
+    threadTail: tail,
+  })
+  handoffs().transition(row.id, 'accepted')
+  dispatchedHandoff.set(target.id, row.id)
+  broadcast({ source: 'handoffs', handoffs: handoffs().list() })
+  void a.send(target.id, { text: prompt, internal: true }).catch((err) => {
+    handoffs().transition(row.id, 'failed', (err as Error).message)
+    if (dispatchedHandoff.get(target.id) === row.id) dispatchedHandoff.delete(target.id)
+    broadcast({ source: 'handoffs', handoffs: handoffs().list() })
+  })
+}
+
+/** Send the next handoff waiting on a now-idle bot, if auto-handoff is on. */
+function drainQueuedHandoffs(botId: string): void {
+  if (!settings().get().allowBotHandoff) return
+  if (dispatchedHandoff.has(botId)) return
+  const next = handoffs().list(botId).find((h) => h.toBotId === botId && h.state === 'queued')
+  if (next) dispatchHandoff(next)
+}
+
+/** Mark the handoff a bot just finished, then pick up anything queued behind it. */
+function completeDispatchedHandoff(bot: Bot): void {
+  const id = dispatchedHandoff.get(bot.id)
+  if (id) {
+    dispatchedHandoff.delete(bot.id)
+    const done = handoffs().transition(id, 'done')
+    broadcast({ source: 'handoffs', handoffs: handoffs().list() })
+    const from = agent?.getBot(done.fromBotId)
+    if (from) pushNotice(from, 'handoff', `${bot.name} finished the handoff`, previewOf(done.prompt) || 'Handoff complete')
+  }
+  drainQueuedHandoffs(bot.id)
+}
+
 function onAgentEvent(evt: EventEnvelope): void {
   broadcast(evt)
   if (evt.source !== 'bot') return
   const bot = evt.bot
+  captureForRecording(bot)
   const prev = lastBotStatus.get(bot.id)
   lastBotStatus.set(bot.id, bot.status)
   if (prev === 'running' && bot.status === 'idle') {
     const last = [...bot.thread].reverse().find((m) => m.role === 'assistant')
     pushNotice(bot, 'done', `${bot.name} is back`, previewOf(last?.text || 'Done.') || 'Done.')
+    completeDispatchedHandoff(bot)
   } else if (bot.status === 'waiting' && prev !== 'waiting') {
     pushNotice(bot, 'waiting', `${bot.name} needs you`, bot.pendingPermission?.title || 'Waiting on you')
   } else if (bot.status === 'error' && prev !== 'error') {
@@ -437,6 +526,16 @@ function wireIpc(): void {
   ipcMain.handle('rs:startRecording', async (_e, payload: { botId: string; title?: string }) => {
     if (!payload?.botId?.trim()) throw new Error('bot id required')
     const rec = recordings().start(payload)
+    // Seed the cursor with what already exists so the recording captures only
+    // what happens from now on, not the backlog already on screen.
+    const bot = agent?.getBot(payload.botId)
+    recCursors.set(payload.botId, {
+      id: rec.id,
+      seenComputer: new Set((bot?.computer ?? []).map((c) => c.id).filter((x): x is string => Boolean(x))),
+      seenThread: new Set(
+        (bot?.thread ?? []).filter((m) => m.role === 'user' && m.id).map((m) => m.id as string),
+      ),
+    })
     broadcast({ source: 'recordings', recordings: recordings().list() })
     return rec
   })
@@ -448,6 +547,7 @@ function wireIpc(): void {
   })
   ipcMain.handle('rs:stopRecording', async (_e, id: string) => {
     const rec = recordings().stop(id)
+    recCursors.delete(rec.botId)
     broadcast({ source: 'recordings', recordings: recordings().list() })
     return rec
   })
@@ -470,8 +570,15 @@ function wireIpc(): void {
       throw new Error('from bot, to bot, and prompt required')
     }
     const row = handoffs().queue(payload)
+    // Loop protection: don't put an A→B→A cycle into flight.
+    if (reciprocalInFlight(handoffs().list(), payload.fromBotId, payload.toBotId)) {
+      const failed = handoffs().transition(row.id, 'failed', 'cycle: a reciprocal handoff is already in flight')
+      broadcast({ source: 'handoffs', handoffs: handoffs().list() })
+      return failed
+    }
     broadcast({ source: 'handoffs', handoffs: handoffs().list() })
-    return row
+    if (settings().get().allowBotHandoff) dispatchHandoff(row)
+    return handoffs().get(row.id) ?? row
   })
 
   ipcMain.handle('rs:listFederated', async (_e, botId?: string) => federation().list(botId))
@@ -570,6 +677,7 @@ app.whenReady().then(async () => {
     rooms: rooms(),
     settings: settings(),
     vault: vault(),
+    federation: federation(),
     scheduleReminder: (botId, schedule, prompt) => {
       const row = scheduler!.add(botId, schedule, prompt, 'reminder')
       broadcast({ source: 'routines', routines: scheduler!.rows() })

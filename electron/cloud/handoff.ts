@@ -17,6 +17,17 @@ import type { Handoff, HandoffState } from '../../shared/cloud'
  * This is also the seam for feature 4 (multi-bot collaboration): a room's work
  * is just a stream of handoffs between its participants.
  */
+/**
+ * Loop protection for auto-dispatch. True when a handoff is still in flight
+ * (queued or accepted) that would make `fromBotId → toBotId` a reciprocal
+ * A→B→A cycle. Pure, so the guard is testable without a store.
+ */
+export function reciprocalInFlight(rows: Handoff[], fromBotId: string, toBotId: string): boolean {
+  return rows.some(
+    (h) => (h.state === 'queued' || h.state === 'accepted') && h.fromBotId === toBotId && h.toBotId === fromBotId,
+  )
+}
+
 export interface HandoffStore {
   list: (botId?: string) => Handoff[]
   get: (id: string) => Handoff | undefined

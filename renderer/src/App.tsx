@@ -1043,11 +1043,6 @@ export default function App(): React.JSX.Element {
                     </button>
                   )}
                 </div>
-                {detail ? (
-                  <p className="mt-2 text-[10px] text-center" style={{ color: 'var(--text-tertiary)' }}>
-                    {detail}
-                  </p>
-                ) : null}
               </div>
             </footer>
           </div>

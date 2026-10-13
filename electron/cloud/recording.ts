@@ -17,6 +17,63 @@ import type { Recording, RecordingStep } from '../../shared/cloud'
 /** A step as the caller supplies it; the store stamps the timestamp. */
 export type RecordingStepInput = Omit<RecordingStep, 'at'>
 
+/** A computer-feed event the capture pass reads (structurally a ComputerEvent). */
+export interface CaptureFeedEvent {
+  id?: string
+  kind: string
+  title: string
+  detail: string
+  at?: number
+}
+
+/** A thread message the capture pass reads (structurally a ChatMessage). */
+export interface CaptureFeedMessage {
+  id?: string
+  role: string
+  text: string
+  at?: number
+}
+
+/** How a computer-feed kind lands in a recording. Handoffs and reviews are notes. */
+const STEP_KIND: Record<string, RecordingStep['kind']> = {
+  tool: 'tool',
+  shell: 'shell',
+  file: 'file',
+  note: 'note',
+  handoff: 'note',
+  review: 'note',
+}
+
+/**
+ * Diff a bot snapshot against what a recording has already seen, returning the
+ * new steps and seeding the caller's sets with the ids consumed. Pure apart
+ * from mutating the two sets it is handed, so the live capture pass in main.ts
+ * stays a thin loop and this logic can be tested on its own. Only user prompts
+ * count as steps from the thread — assistant text is not a demonstration.
+ */
+export function captureRecordingSteps(input: {
+  computer: ReadonlyArray<CaptureFeedEvent>
+  thread: ReadonlyArray<CaptureFeedMessage>
+  seenComputer: Set<string>
+  seenThread: Set<string>
+}): RecordingStepInput[] {
+  const pending: Array<{ at: number; step: RecordingStepInput }> = []
+  for (const ev of input.computer) {
+    if (!ev.id || input.seenComputer.has(ev.id)) continue
+    input.seenComputer.add(ev.id)
+    pending.push({
+      at: ev.at ?? 0,
+      step: { kind: STEP_KIND[ev.kind] ?? 'note', title: ev.title, detail: ev.detail },
+    })
+  }
+  for (const msg of input.thread) {
+    if (msg.role !== 'user' || !msg.id || input.seenThread.has(msg.id)) continue
+    input.seenThread.add(msg.id)
+    pending.push({ at: msg.at ?? 0, step: { kind: 'prompt', title: 'prompt', detail: msg.text } })
+  }
+  return pending.sort((a, b) => a.at - b.at).map((p) => p.step)
+}
+
 export interface RecordingStore {
   list: (botId?: string) => Recording[]
   get: (id: string) => Recording | undefined

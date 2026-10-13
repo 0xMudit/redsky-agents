@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import { audit } from './audit'
 import { buildHandoffPrompt, parseMentions } from './collab'
 import { connectorPromptBlock, type ConnectorStore } from './connectors'
+import { type FederationStore } from './cloud/federation'
 import { api, apiEmpty, type ModelRef } from './http'
 import { newId } from './lib/ids'
 import { createMemoryStore, type MemoryStore } from './memory'
@@ -26,6 +27,12 @@ export interface AgentDeps {
   cancelReminders: (botId: string) => number
   /** Durable conversation record. Optional so pure-in-memory tests can omit it. */
   vault?: Vault
+  /**
+   * Cross-bot shared knowledge (feature 7). Optional so tests and the headless
+   * path can omit it; when present, facts this bot learns are published and
+   * facts other bots learned are folded into the system prompt.
+   */
+  federation?: FederationStore
 }
 
 export interface AgentHandle {
@@ -137,6 +144,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
   // recalled-memory block doesn't just hand the model back its own question.
   const pendingTurn = new Map<string, string>()
   const vault = deps.vault
+  const federation = deps.federation
   // Model-written life tips, generated through the same OpenCode server but in
   // their own throwaway session so they never touch an agent's thread.
   const tips = createTipEngine({ baseUrl: () => baseUrl })
@@ -238,6 +246,14 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     const memBlock = mem.length
       ? `\n\nThings this bot has been told to remember:\n${mem.map((m) => `- ${m.key}: ${m.value}`).join('\n')}`
       : ''
+    // Facts other bots learned (or the user taught), shared across the fleet.
+    // A bot's own facts already sit in memBlock, so they are filtered out here.
+    const shared = federation
+      ? federation.visibleTo(bot.id).filter((f) => f.sourceBotId !== bot.id).slice(0, 12)
+      : []
+    const sharedBlock = shared.length
+      ? `\n\nShared across the team:\n${shared.map((f) => `- ${f.key}: ${f.value}`).join('\n')}`
+      : ''
     const pending = pendingTurn.get(bot.id)
     const vaultBlock = vault ? vault.contextBlock(bot.id, query, pending ? [pending] : []) : ''
     const job = bot.job.trim() ? `\nYour job: ${bot.job.trim()}` : ''
@@ -258,6 +274,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
       settings.allowBotHandoff ? peersLine(bot) : '',
       privacy,
       memBlock,
+      sharedBlock,
       vaultBlock,
     ]
       .filter(Boolean)
@@ -390,7 +407,17 @@ export function createAgent(deps: AgentDeps): AgentHandle {
 
   function harvestAndTeach(bot: BotRecord): void {
     const last = [...bot.thread].reverse().find((m) => m.role === 'assistant')
-    if (last?.text) memory.harvestFromText(last.text, bot.id)
+    if (last?.text) {
+      // Anything this bot just learned is published to the shared layer so the
+      // rest of the fleet can recall it without being taught again.
+      for (const row of memory.harvestFromText(last.text, bot.id)) {
+        try {
+          federation?.publish({ key: row.key, value: row.value, sourceBotId: bot.id })
+        } catch {
+          /* a blank fact is not worth failing the run over */
+        }
+      }
+    }
     vault?.syncProfile(memory.list())
     if (!bot.watchMode) return
     const prompt = lastUserPrompt(bot.id)
