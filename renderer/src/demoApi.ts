@@ -2,13 +2,20 @@ import type {
   AppNotice,
   AppSettings,
   Bot,
+  CloudComputer,
+  CloudRuntimeStatus,
   Connector,
   ConnectorStatus,
+  DeviceClient,
+  DevicePlatform,
   EventEnvelope,
+  FederatedFact,
+  Handoff,
   InitPayload,
   JobTemplate,
   MemoryRow,
   ModelOption,
+  Recording,
   RedSkyApi,
   Room,
   Routine,
@@ -56,6 +63,11 @@ interface DemoSnapshot {
   rooms: Room[]
   notices: AppNotice[]
   memories: MemoryRow[]
+  computers?: CloudComputer[]
+  devices?: DeviceClient[]
+  recordings?: Recording[]
+  handoffs?: Handoff[]
+  federated?: FederatedFact[]
 }
 
 /** localStorage survives reloads but private mode forbids access; treat every call as fallible. */
@@ -117,7 +129,7 @@ const now = Date.now()
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   const persist = (): void => {
     if (!storage) return
-    const snapshot: DemoSnapshot = { version: STORE_VERSION, bots, settings, connectors, rooms, notices, memories }
+    const snapshot: DemoSnapshot = { version: STORE_VERSION, bots, settings, connectors, rooms, notices, memories, computers, devices, recordings, handoffs, federated }
     try {
       storage.setItem(storageKey, JSON.stringify(snapshot))
     } catch {
@@ -166,6 +178,14 @@ const now = Date.now()
   let rooms: Room[] = seeded?.rooms ?? []
   let notices: AppNotice[] = seeded?.notices ?? []
   let memories: MemoryRow[] = seeded?.memories?.length ? seeded.memories : []
+  let computers: CloudComputer[] = seeded?.computers ?? []
+  let devices: DeviceClient[] = seeded?.devices?.length
+    ? seeded.devices
+    : [{ id: 'demo_device_web', name: 'This browser', platform: 'web', lastSeen: now, push: false }]
+  let recordings: Recording[] = seeded?.recordings ?? []
+  let handoffs: Handoff[] = seeded?.handoffs ?? []
+  let federated: FederatedFact[] = seeded?.federated ?? []
+  const cloudState: CloudRuntimeStatus = { kind: 'local', state: 'ready', detail: 'demo', since: now }
   const listeners = new Set<(evt: EventEnvelope) => void>()
   const emit = (evt: EventEnvelope) => {
     scheduleSave()
@@ -205,6 +225,12 @@ const now = Date.now()
       notices,
       settings,
       runtime: 'opencode',
+      cloud: cloudState,
+      computers,
+      devices,
+      recordings,
+      handoffs,
+      federated,
     }),
     models: async () => models,
     createBot: async (payload) => {
@@ -472,6 +498,123 @@ const now = Date.now()
       settings = { ...settings, ...patch, version: 1 }
       emit({ source: 'settings', settings })
       return settings
+    },
+    cloudStatus: async () => cloudState,
+    listComputers: async () => computers,
+    ensureComputer: async (botId) => {
+      const at = Date.now()
+      const existing = computers.find((c) => c.botId === botId)
+      const next: CloudComputer = existing
+        ? { ...existing, state: 'ready', updatedAt: at }
+        : { botId, state: 'ready', root: `(demo)/.computers/${botId}`, credentialCount: 0, createdAt: at, updatedAt: at }
+      computers = existing ? computers.map((c) => (c.botId === botId ? next : c)) : [...computers, next]
+      emit({ source: 'computers', computers })
+      return next
+    },
+    stopComputer: async (botId) => {
+      const existing = computers.find((c) => c.botId === botId)
+      const next: CloudComputer = existing
+        ? { ...existing, state: 'stopped', updatedAt: Date.now() }
+        : { botId, state: 'stopped', root: `(demo)/.computers/${botId}`, credentialCount: 0, createdAt: Date.now(), updatedAt: Date.now() }
+      computers = existing ? computers.map((c) => (c.botId === botId ? next : c)) : [...computers, next]
+      emit({ source: 'computers', computers })
+      return next
+    },
+    listDevices: async () => devices,
+    registerDevice: async (payload) => {
+      const platform: DevicePlatform = payload.platform
+      const device: DeviceClient = { id: demoId(), name: payload.name, platform, lastSeen: Date.now(), push: payload.push !== false }
+      devices = [...devices, device]
+      emit({ source: 'devices', devices })
+      return device
+    },
+    removeDevice: async (id) => {
+      devices = devices.filter((d) => d.id !== id)
+      emit({ source: 'devices', devices })
+      return { ok: true }
+    },
+    listRecordings: async (botId) => (botId ? recordings.filter((r) => r.botId === botId) : recordings),
+    startRecording: async (payload) => {
+      const at = Date.now()
+      const rec: Recording = {
+        id: demoId(),
+        botId: payload.botId,
+        state: 'recording',
+        title: payload.title?.trim() || 'Untitled recording',
+        steps: [],
+        startedAt: at,
+      }
+      recordings = [rec, ...recordings]
+      emit({ source: 'recordings', recordings })
+      return rec
+    },
+    captureRecording: async (id, step) => {
+      const rec = recordings.find((r) => r.id === id)!
+      const next: Recording = { ...rec, steps: [...rec.steps, { at: Date.now(), ...step }] }
+      recordings = recordings.map((r) => (r.id === id ? next : r))
+      emit({ source: 'recordings', recordings })
+      return next
+    },
+    stopRecording: async (id) => {
+      const rec = recordings.find((r) => r.id === id)!
+      const next: Recording = { ...rec, state: 'stopped', stoppedAt: Date.now() }
+      recordings = recordings.map((r) => (r.id === id ? next : r))
+      emit({ source: 'recordings', recordings })
+      return next
+    },
+    saveRecordingAsRoutine: async (payload) => {
+      const rec = recordings.find((r) => r.id === payload.id)!
+      const routine: Routine = {
+        id: `${Date.now()}`,
+        botId: rec.botId,
+        schedule: payload.schedule,
+        prompt: rec.title,
+        enabled: true,
+        origin: 'taught',
+      }
+      recordings = recordings.map((r) => (r.id === payload.id ? { ...r, routineId: routine.id } : r))
+      emit({ source: 'recordings', recordings })
+      return routine
+    },
+    listHandoffs: async (botId) =>
+      botId ? handoffs.filter((h) => h.fromBotId === botId || h.toBotId === botId) : handoffs,
+    queueHandoff: async (payload) => {
+      const at = Date.now()
+      const row: Handoff = {
+        id: demoId(),
+        fromBotId: payload.fromBotId,
+        toBotId: payload.toBotId,
+        prompt: payload.prompt,
+        state: 'queued',
+        createdAt: at,
+        updatedAt: at,
+      }
+      handoffs = [...handoffs, row]
+      emit({ source: 'handoffs', handoffs })
+      return row
+    },
+    listFederated: async (botId) =>
+      botId
+        ? federated.filter((f) => f.sourceBotId === botId || !f.sharedWith?.length || f.sharedWith.includes(botId))
+        : federated,
+    publishFact: async (payload) => {
+      const at = Date.now()
+      const fact: FederatedFact = {
+        id: demoId(),
+        key: payload.key,
+        value: payload.value,
+        sourceBotId: payload.botId,
+        createdAt: at,
+        updatedAt: at,
+      }
+      federated = [fact, ...federated]
+      emit({ source: 'federated', facts: federated })
+      return fact
+    },
+    forgetFact: async (id) => {
+      federated = federated.filter((f) => f.id !== id)
+      emit({ source: 'federated', facts: federated })
+      return { ok: true }
     },
     openWorkspace: async () => ({ ok: true }),
     openLogs: async () => ({ ok: true }),

@@ -1,5 +1,32 @@
 /** Canonical domain types shared by the Electron main process and the renderer. */
 
+import type {
+  CloudComputer,
+  CloudRuntimeStatus,
+  DeviceClient,
+  DevicePlatform,
+  FederatedFact,
+  Handoff,
+  Recording,
+  RecordingStep,
+} from './cloud'
+
+export type {
+  CloudComputer,
+  CloudRuntimeStatus,
+  ComputerState,
+  CloudRuntimeKind,
+  CloudRuntimeState,
+  DeviceClient,
+  DevicePlatform,
+  FederatedFact,
+  Handoff,
+  HandoffState,
+  Recording,
+  RecordingState,
+  RecordingStep,
+} from './cloud'
+
 export type BotStatus = 'idle' | 'running' | 'error' | 'waiting'
 export type ReviewMode = 'always' | 'sensitive' | 'off'
 export type ConnectorStatus = 'disconnected' | 'connected' | 'error'
@@ -183,6 +210,13 @@ export interface InitPayload {
   notices: AppNotice[]
   settings: AppSettings
   runtime: 'opencode'
+  /** Cloud capability state — see docs/FEATURES-CLOUD.md. */
+  cloud: CloudRuntimeStatus
+  computers: CloudComputer[]
+  devices: DeviceClient[]
+  recordings: Recording[]
+  handoffs: Handoff[]
+  federated: FederatedFact[]
 }
 
 /** First-run prerequisites the renderer renders as ✓/✗. */
@@ -209,6 +243,12 @@ export type EventEnvelope =
   | { source: 'notice'; notice: AppNotice }
   | { source: 'notices'; notices: AppNotice[] }
   | { source: 'routines'; routines: Routine[] }
+  | { source: 'cloud'; cloud: CloudRuntimeStatus }
+  | { source: 'computers'; computers: CloudComputer[] }
+  | { source: 'devices'; devices: DeviceClient[] }
+  | { source: 'recordings'; recordings: Recording[] }
+  | { source: 'handoffs'; handoffs: Handoff[] }
+  | { source: 'federated'; facts: FederatedFact[] }
 
 export interface RedSkyApi {
   init: () => Promise<InitPayload>
@@ -265,6 +305,24 @@ export interface RedSkyApi {
   clearNotices: () => Promise<{ ok: boolean }>
   getSettings: () => Promise<AppSettings>
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
+  // Cloud capabilities — see docs/FEATURES-CLOUD.md.
+  cloudStatus: () => Promise<CloudRuntimeStatus>
+  listComputers: () => Promise<CloudComputer[]>
+  ensureComputer: (botId: string) => Promise<CloudComputer>
+  stopComputer: (botId: string) => Promise<CloudComputer>
+  listDevices: () => Promise<DeviceClient[]>
+  registerDevice: (payload: { name: string; platform: DevicePlatform; push?: boolean }) => Promise<DeviceClient>
+  removeDevice: (id: string) => Promise<{ ok: boolean }>
+  listRecordings: (botId?: string) => Promise<Recording[]>
+  startRecording: (payload: { botId: string; title?: string }) => Promise<Recording>
+  captureRecording: (id: string, step: Omit<RecordingStep, 'at'>) => Promise<Recording>
+  stopRecording: (id: string) => Promise<Recording>
+  saveRecordingAsRoutine: (payload: { id: string; schedule: string }) => Promise<Routine>
+  listHandoffs: (botId?: string) => Promise<Handoff[]>
+  queueHandoff: (payload: { fromBotId: string; toBotId: string; prompt: string }) => Promise<Handoff>
+  listFederated: (botId?: string) => Promise<FederatedFact[]>
+  publishFact: (payload: { key: string; value: string; botId?: string }) => Promise<FederatedFact>
+  forgetFact: (id: string) => Promise<{ ok: boolean }>
   openWorkspace: () => Promise<{ ok: boolean }>
   openLogs: () => Promise<{ ok: boolean }>
   setupCheck: () => Promise<SetupCheck>

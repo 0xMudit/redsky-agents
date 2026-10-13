@@ -4,6 +4,12 @@ import { autoUpdater } from 'electron-updater'
 import { createAgent, JOB_TEMPLATES, type AgentHandle } from './agent'
 import { audit } from './audit'
 import { createConnectorStore } from './connectors'
+import { createComputerStore } from './cloud/computer'
+import { createDeviceStore } from './cloud/devices'
+import { createFederationStore } from './cloud/federation'
+import { createHandoffStore } from './cloud/handoff'
+import { createRecordingStore, draftRoutineFromRecording } from './cloud/recording'
+import { createLocalRuntime } from './cloud/runtime'
 import { createLogger } from './lib/logger'
 import { listModels } from './models'
 import { createNoticeStore } from './notices'
@@ -18,6 +24,7 @@ import { checkOpenCode, composeFeedbackUrl, redactedLogTail } from './beta'
 import { previewOf } from '../shared/visible'
 import type { ModelRef } from './http'
 import type { AppSettings, Bot, ConnectorStatus, EventEnvelope, NoticeKind } from '../shared/types'
+import type { DevicePlatform, RecordingStep } from '../shared/cloud'
 
 let mainWindow: BrowserWindow | null = null
 let baseUrl = ''
@@ -28,6 +35,12 @@ let connectorStore: ReturnType<typeof createConnectorStore> | undefined
 let roomStore: ReturnType<typeof createRoomStore> | undefined
 let noticeStore: ReturnType<typeof createNoticeStore> | undefined
 let vaultStore: ReturnType<typeof createVault> | undefined
+let computerStore: ReturnType<typeof createComputerStore> | undefined
+let deviceStore: ReturnType<typeof createDeviceStore> | undefined
+let recordingStore: ReturnType<typeof createRecordingStore> | undefined
+let handoffStore: ReturnType<typeof createHandoffStore> | undefined
+let federationStore: ReturnType<typeof createFederationStore> | undefined
+const cloudRuntime = createLocalRuntime()
 const lastBotStatus = new Map<string, Bot['status']>()
 const log = createLogger()
 
@@ -45,6 +58,27 @@ function notices(): ReturnType<typeof createNoticeStore> {
 }
 function vault(): ReturnType<typeof createVault> {
   return (vaultStore ??= createVault())
+}
+function computers(): ReturnType<typeof createComputerStore> {
+  return (computerStore ??= createComputerStore())
+}
+function devices(): ReturnType<typeof createDeviceStore> {
+  return (deviceStore ??= createDeviceStore())
+}
+function recordings(): ReturnType<typeof createRecordingStore> {
+  return (recordingStore ??= createRecordingStore())
+}
+function handoffs(): ReturnType<typeof createHandoffStore> {
+  return (handoffStore ??= createHandoffStore())
+}
+function federation(): ReturnType<typeof createFederationStore> {
+  return (federationStore ??= createFederationStore())
+}
+
+/** Reflect a runtime state change to the status bar and the cloud panel. */
+function setCloudState(state: Parameters<typeof cloudRuntime.markState>[0], detail?: string): void {
+  cloudRuntime.markState(state, detail)
+  broadcast({ source: 'cloud', cloud: cloudRuntime.status() })
 }
 
 function pushNotice(bot: Bot, kind: NoticeKind, title: string, body: string, alwaysOs = false): void {
@@ -154,6 +188,12 @@ function wireIpc(): void {
       notices: notices().list(),
       settings: settings().get(),
       runtime: 'opencode',
+      cloud: cloudRuntime.status(),
+      computers: computers().list(),
+      devices: devices().list(),
+      recordings: recordings().list(),
+      handoffs: handoffs().list(),
+      federated: federation().list(),
     }
   })
 
@@ -362,6 +402,91 @@ function wireIpc(): void {
     return next
   })
 
+  // Cloud capabilities — see docs/FEATURES-CLOUD.md. Each mutation broadcasts so
+  // every open panel reconciles against the same store.
+  ipcMain.handle('rs:cloudStatus', async () => cloudRuntime.status())
+
+  ipcMain.handle('rs:listComputers', async () => computers().list())
+  ipcMain.handle('rs:ensureComputer', async (_e, botId: string) => {
+    if (!botId?.trim()) throw new Error('bot id required')
+    const computer = computers().ensure(botId)
+    broadcast({ source: 'computers', computers: computers().list() })
+    return computer
+  })
+  ipcMain.handle('rs:stopComputer', async (_e, botId: string) => {
+    if (!botId?.trim()) throw new Error('bot id required')
+    const computer = computers().stop(botId)
+    broadcast({ source: 'computers', computers: computers().list() })
+    return computer
+  })
+
+  ipcMain.handle('rs:listDevices', async () => devices().list())
+  ipcMain.handle('rs:registerDevice', async (_e, payload: { name: string; platform: DevicePlatform; push?: boolean }) => {
+    if (!payload?.name?.trim()) throw new Error('device name required')
+    const device = devices().register(payload)
+    broadcast({ source: 'devices', devices: devices().list() })
+    return device
+  })
+  ipcMain.handle('rs:removeDevice', async (_e, id: string) => {
+    devices().remove(id)
+    broadcast({ source: 'devices', devices: devices().list() })
+    return { ok: true }
+  })
+
+  ipcMain.handle('rs:listRecordings', async (_e, botId?: string) => recordings().list(botId))
+  ipcMain.handle('rs:startRecording', async (_e, payload: { botId: string; title?: string }) => {
+    if (!payload?.botId?.trim()) throw new Error('bot id required')
+    const rec = recordings().start(payload)
+    broadcast({ source: 'recordings', recordings: recordings().list() })
+    return rec
+  })
+  ipcMain.handle('rs:captureRecording', async (_e, id: string, step: Omit<RecordingStep, 'at'>) => {
+    if (!step?.title?.trim()) throw new Error('recording step needs a title')
+    const rec = recordings().capture(id, step)
+    broadcast({ source: 'recordings', recordings: recordings().list() })
+    return rec
+  })
+  ipcMain.handle('rs:stopRecording', async (_e, id: string) => {
+    const rec = recordings().stop(id)
+    broadcast({ source: 'recordings', recordings: recordings().list() })
+    return rec
+  })
+  ipcMain.handle('rs:saveRecordingAsRoutine', async (_e, payload: { id: string; schedule: string }) => {
+    if (!scheduler) throw new Error('scheduler not ready')
+    if (!payload?.id || !payload.schedule?.trim()) throw new Error('recording and schedule required')
+    const rec = recordings().get(payload.id)
+    if (!rec) throw new Error('recording not found')
+    const draft = draftRoutineFromRecording(rec, payload.schedule)
+    const routine = scheduler.add(draft.botId, draft.schedule, draft.prompt, 'taught')
+    recordings().markRoutine(payload.id, routine.id)
+    broadcast({ source: 'routines', routines: scheduler.rows() })
+    broadcast({ source: 'recordings', recordings: recordings().list() })
+    return routine
+  })
+
+  ipcMain.handle('rs:listHandoffs', async (_e, botId?: string) => handoffs().list(botId))
+  ipcMain.handle('rs:queueHandoff', async (_e, payload: { fromBotId: string; toBotId: string; prompt: string }) => {
+    if (!payload?.fromBotId || !payload?.toBotId || !payload?.prompt?.trim()) {
+      throw new Error('from bot, to bot, and prompt required')
+    }
+    const row = handoffs().queue(payload)
+    broadcast({ source: 'handoffs', handoffs: handoffs().list() })
+    return row
+  })
+
+  ipcMain.handle('rs:listFederated', async (_e, botId?: string) => federation().list(botId))
+  ipcMain.handle('rs:publishFact', async (_e, payload: { key: string; value: string; botId?: string }) => {
+    if (!payload?.key?.trim() || !payload?.value?.trim()) throw new Error('key and value required')
+    const fact = federation().publish({ key: payload.key, value: payload.value, sourceBotId: payload.botId })
+    broadcast({ source: 'federated', facts: federation().list() })
+    return fact
+  })
+  ipcMain.handle('rs:forgetFact', async (_e, id: string) => {
+    federation().forget(id)
+    broadcast({ source: 'federated', facts: federation().list() })
+    return { ok: true }
+  })
+
   ipcMain.handle('rs:tool', async (_e, payload: { name: string; args: unknown[] }) => {
     const fn = (tools as Record<string, unknown>)[payload.name] as ((...a: never[]) => Promise<unknown>) | undefined
     if (!fn) throw new Error(`unknown tool: ${payload.name}`)
@@ -465,6 +590,7 @@ app.whenReady().then(async () => {
   agent.importHistory()
   createWindow()
   broadcast({ source: 'status', state: 'starting', detail: 'starting OpenCode…' })
+  setCloudState('starting', 'starting OpenCode…')
 
   // Auto-updater: only runs in packaged builds, not during `npm start`.
   // Checks GitHub Releases for a newer version; notifies the user silently.
@@ -504,6 +630,7 @@ app.whenReady().then(async () => {
   if (!cliCheck.found) {
     log.warn('opencode.cli.missing', { PATH: process.env.PATH?.slice(0, 200) })
     broadcast({ source: 'status', state: 'offline', detail: 'opencode-missing' })
+    setCloudState('offline', 'opencode-missing')
     // Don't attempt to start the server — it will always fail.
     return
   }
@@ -515,10 +642,12 @@ app.whenReady().then(async () => {
     // Have life tips ready before the first send needs one.
     agent.warmTips()
     broadcast({ source: 'status', state: 'online', detail: `opencode · ${baseUrl}` })
+    setCloudState('ready', `local · ${baseUrl}`)
     audit('runtime.online', { baseUrl })
   } catch (err) {
     log.error('opencode.start.failed', { err: (err as Error).message })
     serverEvents.emit('status', { state: 'offline', detail: (err as Error).message })
+    setCloudState('degraded', (err as Error).message)
   }
 
   app.on('activate', () => {
@@ -532,5 +661,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   scheduler?.stop()
+  void cloudRuntime.stop()
   stopServer()
 })

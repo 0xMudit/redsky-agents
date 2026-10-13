@@ -247,6 +247,9 @@ More in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and the [issue tracker](https
   (component) tests and the live IPC boundary are still open.
 - Drag-and-drop file import into the workspace (`importDroppedFiles` exists with no UI), and a DevTools toggle
   for the frameless window. See [Known limitations](docs/ARCHITECTURE.md#known-limitations).
+- Cloud capabilities — persistent per-bot computers, a 24/7 hosted runtime, mobile clients, teach-by-showing,
+  cross-bot knowledge, and a durable handoff queue — are scaffolded and typed end to end. See
+  [docs/FEATURES-CLOUD.md](docs/FEATURES-CLOUD.md) for the assignments.
 
 ## Contributing
 

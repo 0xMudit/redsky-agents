@@ -54,6 +54,27 @@ const redsky = {
   clearNotices: () => ipcRenderer.invoke('rs:clearNotices'),
   getSettings: () => ipcRenderer.invoke('rs:getSettings'),
   updateSettings: (patch: unknown) => ipcRenderer.invoke('rs:updateSettings', patch),
+  cloudStatus: () => ipcRenderer.invoke('rs:cloudStatus'),
+  listComputers: () => ipcRenderer.invoke('rs:listComputers'),
+  ensureComputer: (botId: string) => ipcRenderer.invoke('rs:ensureComputer', botId),
+  stopComputer: (botId: string) => ipcRenderer.invoke('rs:stopComputer', botId),
+  listDevices: () => ipcRenderer.invoke('rs:listDevices'),
+  registerDevice: (payload: { name: string; platform: 'desktop' | 'web' | 'ios' | 'android'; push?: boolean }) =>
+    ipcRenderer.invoke('rs:registerDevice', payload),
+  removeDevice: (id: string) => ipcRenderer.invoke('rs:removeDevice', id),
+  listRecordings: (botId?: string) => ipcRenderer.invoke('rs:listRecordings', botId),
+  startRecording: (payload: { botId: string; title?: string }) => ipcRenderer.invoke('rs:startRecording', payload),
+  captureRecording: (id: string, step: { kind: string; title: string; detail: string }) =>
+    ipcRenderer.invoke('rs:captureRecording', id, step),
+  stopRecording: (id: string) => ipcRenderer.invoke('rs:stopRecording', id),
+  saveRecordingAsRoutine: (payload: { id: string; schedule: string }) =>
+    ipcRenderer.invoke('rs:saveRecordingAsRoutine', payload),
+  listHandoffs: (botId?: string) => ipcRenderer.invoke('rs:listHandoffs', botId),
+  queueHandoff: (payload: { fromBotId: string; toBotId: string; prompt: string }) =>
+    ipcRenderer.invoke('rs:queueHandoff', payload),
+  listFederated: (botId?: string) => ipcRenderer.invoke('rs:listFederated', botId),
+  publishFact: (payload: { key: string; value: string; botId?: string }) => ipcRenderer.invoke('rs:publishFact', payload),
+  forgetFact: (id: string) => ipcRenderer.invoke('rs:forgetFact', id),
   openWorkspace: () => ipcRenderer.invoke('rs:openWorkspace'),
   openLogs: () => ipcRenderer.invoke('rs:openLogs'),
   setupCheck: () => ipcRenderer.invoke('rs:setupCheck'),

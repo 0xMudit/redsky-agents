@@ -185,7 +185,13 @@ Everything lives under Electron's `userData` directory and survives restarts, up
 | `rooms.json` | Group threads and participants. |
 | `notices.json` | Notification inbox, capped at the newest 80. |
 | `connectors.json` | Connector status overlay over the catalog. |
+| `devices.json` | Clients attached to the runtime (desktop, browser, phone). |
+| `recordings.json` | Teach-by-showing recordings and their steps. |
+| `handoffs.json` | Bot-to-bot handoff queue. |
+| `federated.json` | Facts shared across bots. |
 | `workspace/` | The sandboxed directory all file and shell tools are confined to. |
+| `workspace/computers.json` | Per-bot computers: state and saved-login labels. |
+| `workspace/.computers/` | Each bot's own directory and saved files. |
 | `workspace/logs/` | Append-only run logs (below). |
 | `workspace/inbox/` | Files dropped into the app, stored with a timestamp prefix. *Not yet reachable — the import helper has no UI or IPC channel; see [Known limitations](ARCHITECTURE.md#known-limitations).* |
 

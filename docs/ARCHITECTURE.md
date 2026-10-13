@@ -127,11 +127,12 @@ The renderer's entire capability set. Every channel is a typed `ipcMain.handle`,
 | Workspace | `rs:files`, `rs:fileContent`, `rs:search`, `rs:tool`, `rs:openWorkspace`, `rs:openLogs` |
 | Memory | `rs:listMemories`, `rs:addMemory`, `rs:deleteMemory`, `rs:clearMemories` |
 | Schedules | `rs:listRoutines`, `rs:addRoutine`, `rs:removeRoutine`, `rs:toggleRoutine`, `rs:teachRoutine` |
+| Cloud | `rs:cloudStatus`, `rs:listComputers`, `rs:ensureComputer`, `rs:stopComputer`, `rs:listDevices`, `rs:registerDevice`, `rs:removeDevice`, `rs:listRecordings`, `rs:startRecording`, `rs:captureRecording`, `rs:stopRecording`, `rs:saveRecordingAsRoutine`, `rs:listHandoffs`, `rs:queueHandoff`, `rs:listFederated`, `rs:publishFact`, `rs:forgetFact` |
 | Connectors & rooms | `rs:listConnectors`, `rs:updateConnector`, `rs:listRooms`, `rs:createRoom`, `rs:addToRoom`, `rs:renameRoom`, `rs:deleteRoom` |
 | Notices | `rs:listNotices`, `rs:markNoticeRead`, `rs:markAllNoticesRead`, `rs:clearNotices` |
 | Settings | `rs:getSettings`, `rs:updateSettings` |
 | Window | `win:minimize`, `win:maximize`, `win:close` (fire-and-forget `send`, not `invoke`) |
-| Push | `rs:event` → `status`, `bot`, `deleted`, `settings`, `connectors`, `rooms`, `teach`, `notice`, `notices`, `routines` |
+| Push | `rs:event` → `status`, `bot`, `deleted`, `settings`, `connectors`, `rooms`, `teach`, `notice`, `notices`, `routines`, `cloud`, `computers`, `devices`, `recordings`, `handoffs`, `federated` |
 
 Adding a channel means touching four files — the walkthrough is in
 [docs/DEVELOPMENT.md](DEVELOPMENT.md#adding-an-ipc-method).
@@ -150,6 +151,11 @@ There is no database. Each store is a `JsonStore<T>` over one file in `userData`
 | `rooms.ts` | `rooms.json` | `Room[]` — group threads. |
 | `notices.ts` | `notices.json` | `AppNotice[]`, capped at 80. |
 | `connectors.ts` | `connectors.json` | Overlay over a hardcoded catalog, so catalog changes ship without a migration. |
+| `cloud/computer.ts` | `workspace/computers.json` | Per-bot computer records; credential labels only, never values. |
+| `cloud/devices.ts` | `devices.json` | `DeviceClient[]` — desktop, browser, and phone clients. |
+| `cloud/recording.ts` | `recordings.json` | `Recording[]` — teach-by-showing captures and their steps. |
+| `cloud/handoff.ts` | `handoffs.json` | `Handoff[]` — the durable bot-to-bot queue. |
+| `cloud/federation.ts` | `federated.json` | `FederatedFact[]` — knowledge shared across bots. |
 | `lib/logger.ts`, `audit.ts`, `tools.ts` | `workspace/logs/*.ndjson` | Append-only JSON Lines: app logs, audit trail, and tool in/out records. |
 
 Errors are surfaced, not swallowed silently: logger and audit failures are caught and dropped (logging must
