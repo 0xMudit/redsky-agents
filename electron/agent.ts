@@ -13,7 +13,7 @@ import { type SettingsStore } from './settings'
 import { parseCancelReminder, parseReminder, reminderLabel } from './remind'
 import { createBotStore, HUES, type BotRecord, type BotStore, type ChatMessage, type ComputerEvent } from './store'
 import { createTipEngine } from './tips'
-import { type Vault } from './vault'
+import { safeTime, type Vault } from './vault'
 import { diffSnaps, searchWorkspaceFiles, snapshotWorkspace, type FileSnap } from './workspace'
 import { partLooksLikeThinking, previewOf, stripThinking } from '../shared/visible'
 import type { Artifact, Routine, SearchHit } from '../shared/types'
@@ -269,7 +269,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     if (!vault || !msg.text?.trim()) return
     const turn = vault.recordTurn({
       id: msg.id,
-      at: msg.at,
+      at: safeTime(msg.at),
       role: msg.role,
       text: msg.text,
       botId: bot.id,
@@ -298,7 +298,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
         const id = msg.id ?? `his_${bot.id}_${msg.at ?? 0}_${index}`
         const turn = vault.recordTurn({
           id,
-          at: msg.at ?? bot.createdAt,
+          at: safeTime(msg.at ?? bot.createdAt),
           role: msg.role,
           text: msg.text,
           botId: bot.id,
@@ -353,7 +353,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
         if (part.type === 'text' && typeof part.text === 'string') texts.push(stripThinking(part.text))
       }
       const text = texts.filter(Boolean).join('\n\n').trim()
-      if (text) out.push({ id: newId('m'), role, text, at: Number(info.time ?? info.createdAt ?? Date.now()) })
+      if (text) out.push({ id: newId('m'), role, text, at: safeTime(info.time ?? info.createdAt ?? Date.now()) })
     }
     return out
   }

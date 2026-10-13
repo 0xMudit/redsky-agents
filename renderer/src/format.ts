@@ -104,7 +104,13 @@ export function renderMarkdown(text: string): string {
 }
 
 export function timeLabel(ts: number): string {
-  return new Date(ts).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  const d = new Date(ts)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+}
+
+export function dateLabel(ts: number): string {
+  const d = new Date(ts)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
 export { stripThinking }

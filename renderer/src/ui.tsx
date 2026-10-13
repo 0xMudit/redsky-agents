@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
-import { renderMarkdown, timeLabel } from './format'
+import { dateLabel, renderMarkdown, timeLabel } from './format'
 import type {
   AppSettings,
   Bot,
@@ -551,28 +551,6 @@ export function RunningDots({ hue, label }: { hue: string; label?: string }): Re
 /* ── Working window (life tip while an agent runs) ─────────── */
 
 export function WorkingWindow({ hue, name }: { hue: string; name?: string }): React.JSX.Element {
-  const [tip, setTip] = useState('Thinking of something worth saying…')
-  const [seq, setSeq] = useState(0)
-  useEffect(() => {
-    let alive = true
-    const pull = () => {
-      void api
-        .lifeTip()
-        .then((t) => {
-          if (alive && t) {
-            setTip(t)
-            setSeq((n) => n + 1)
-          }
-        })
-        .catch(() => undefined)
-    }
-    pull()
-    const timer = setInterval(pull, 8000)
-    return () => {
-      alive = false
-      clearInterval(timer)
-    }
-  }, [])
   return (
     <div className="work-window motion-fade-up" style={{ '--work-tint': hue } as React.CSSProperties}>
       <span className="work-orbit" aria-hidden="true">
@@ -584,9 +562,6 @@ export function WorkingWindow({ hue, name }: { hue: string; name?: string }): Re
         <div className="text-[11.5px] font-medium" style={{ color: 'var(--text-secondary)' }}>
           {name ? `${name} is working` : 'Working'}
         </div>
-        <p key={seq} className="tip-in text-[13px] leading-snug mt-0.5" style={{ color: 'var(--text-tertiary)' }}>
-          {tip}
-        </p>
       </div>
     </div>
   )
@@ -1273,8 +1248,7 @@ export function HistoryPanel({
                     </span>
                   )}
                   <span className="ml-auto text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                    {new Date(t.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}{' '}
-                    {new Date(t.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                    {dateLabel(t.at)} {timeLabel(t.at)}
                   </span>
                 </div>
                 <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>

@@ -3,7 +3,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { after, describe, it } from 'node:test'
-import { createVault, tokenize, VaultCorpus } from '../electron/vault'
+import { createVault, safeTime, tokenize, VaultCorpus } from '../electron/vault'
 
 const roots: string[] = []
 
@@ -278,5 +278,53 @@ describe('vault — per-user history', () => {
 
     const second = createVault({ root })
     assert.equal(second.turns()[0].user, 'Mudit')
+  })
+})
+
+// ── invalid timestamps ────────────────────────────────────────────────────────
+
+describe('vault — invalid timestamps', () => {
+  it('coerces numbers, numeric strings, and ISO strings', () => {
+    assert.equal(safeTime(1789916795344), 1789916795344)
+    assert.equal(safeTime('1789916795344'), 1789916795344)
+    assert.equal(safeTime('2026-10-13T16:23:28.805Z'), Date.parse('2026-10-13T16:23:28.805Z'))
+  })
+
+  it('falls back to now for null, NaN, undefined, and junk', () => {
+    for (const bad of [null, undefined, NaN, Infinity, '', 'not a date', {}]) {
+      const t = safeTime(bad)
+      assert.ok(Number.isFinite(t), `expected a finite time for ${String(bad)}`)
+      assert.ok(Math.abs(t - Date.now()) < 5000)
+    }
+  })
+
+  it('does not crash recording a turn whose timestamp is NaN', () => {
+    const root = makeRoot()
+    const vault = createVault({ root })
+    // A NaN at is serialised to JSON as null — the shape older versions persisted.
+    vault.recordTurn({ role: 'assistant', text: 'hello', botId: 'b', botName: 'B', at: NaN })
+    assert.ok(Number.isFinite(vault.turns()[0].at))
+  })
+
+  it('reloads a raw transcript containing a null timestamp without crashing', () => {
+    const root = makeRoot()
+    const raw = path.join(root, 'raw')
+    fs.mkdirSync(raw, { recursive: true })
+    fs.writeFileSync(
+      path.join(raw, 'b.jsonl'),
+      [
+        JSON.stringify({ id: 'm1', at: null, role: 'assistant', text: 'first', botId: 'b', botName: 'B' }),
+        JSON.stringify({ id: 'm2', at: 1789916795344, role: 'user', text: 'second', botId: 'b', botName: 'B' }),
+      ].join('\n'),
+      'utf8',
+    )
+
+    const vault = createVault({ root })
+    vault.init()
+    // rebuildIndex runs as part of recording — the old code threw here.
+    assert.doesNotThrow(() => vault.recordTurn({ role: 'user', text: 'third', botId: 'b', botName: 'B' }))
+    assert.equal(vault.turns().length, 3)
+    assert.ok(vault.turns().every((t) => Number.isFinite(t.at)))
+    assert.match(read(path.join(root, 'index.md')), /B/)
   })
 })

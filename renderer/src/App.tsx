@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
-import { stripThinking } from './format'
+import { stripThinking, timeLabel } from './format'
 import type { AppNotice, Bot, Connector, EventEnvelope, FileNode, HistoryTurn, JobTemplate, MemoryRow, ModelOption, Room, Routine, SearchHit, SetupCheck } from './types'
 import {
   ActivityIcon,
@@ -1115,7 +1115,7 @@ export default function App(): React.JSX.Element {
                         <div className="flex justify-between gap-2">
                           <span className="text-[12px] font-medium">{n.title}</span>
                           <span className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-                            {new Date(n.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}
+                            {timeLabel(n.at)}
                           </span>
                         </div>
                         <p className="text-[12px] truncate mt-0.5" style={{ color: 'var(--text-secondary)' }}>

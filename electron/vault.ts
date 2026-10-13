@@ -144,6 +144,23 @@ export function tokenize(text: string): string[] {
   return found.filter((t) => !STOPWORDS.has(t))
 }
 
+/**
+ * Coerce a timestamp (ms number, numeric string, or ISO date string) to a finite
+ * ms value. Anything else — including NaN and `null` left behind by older
+ * versions — falls back to now, so corpus writes and derived files never crash
+ * on an Invalid Date.
+ */
+export function safeTime(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const asNum = Number(value)
+    if (Number.isFinite(asNum)) return asNum
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return Date.now()
+}
+
 /** Pure-JS inverted index. Personal-scale corpora, so no SQLite/FTS dependency. */
 export class VaultCorpus {
   private postings = new Map<string, Map<string, number>>()
@@ -292,7 +309,7 @@ prompt at the start of each run.
           if (!rec || typeof rec.text !== 'string' || !rec.text.trim()) continue
           corpus.add({
             id: String(rec.id ?? newId('turn')),
-            at: Number(rec.at ?? Date.now()),
+            at: safeTime(rec.at),
             role: rec.role === 'user' || rec.role === 'system' ? rec.role : 'assistant',
             text: rec.text,
             botId: String(rec.botId ?? 'unknown'),
@@ -336,7 +353,7 @@ prompt at the start of each run.
       if (!fs.existsSync(file)) {
         fs.writeFileSync(file, `# Conversation with ${turn.botName}\n\n_Agent \`${turn.botId}\` · recorded automatically._\n`, 'utf8')
       }
-      const when = new Date(turn.at).toISOString()
+      const when = new Date(safeTime(turn.at)).toISOString()
       fs.appendFileSync(file, `\n## [${when}] ${turn.role}\n\n${turn.text}\n`, 'utf8')
     } catch {
       /* ignore */
@@ -365,7 +382,7 @@ prompt at the start of each run.
     const ordered = [...groups.entries()].sort((a, b) => (b[1].at(-1)?.at ?? 0) - (a[1].at(-1)?.at ?? 0))
     for (const [botId, list] of ordered) {
       const name = list.at(-1)?.botName ?? 'Agent'
-      const last = new Date(list.at(-1)?.at ?? Date.now()).toISOString().slice(0, 10)
+      const last = new Date(safeTime(list.at(-1)?.at)).toISOString().slice(0, 10)
       const firstAsk = list.find((t) => t.role === 'user')?.text ?? list[0]?.text ?? ''
       lines.push(`## ${name} — \`${botId}\``)
       lines.push(`- ${list.length} turns · last active ${last}`)
@@ -392,7 +409,7 @@ prompt at the start of each run.
     if (corpus.has(id)) return undefined
     const turn: VaultTurn = {
       id,
-      at: input.at ?? Date.now(),
+      at: safeTime(input.at),
       role: input.role,
       text,
       botId: input.botId || 'unknown',
@@ -438,7 +455,7 @@ prompt at the start of each run.
     const recalled = corpus.search(query, 6, botId, excludeIds, user)
     if (recalled.length) {
       const lines = recalled.map(
-        (t) => `- [${new Date(t.at).toISOString().slice(0, 10)} · ${t.botName}] ${snippet(t.text, query)}`,
+        (t) => `- [${new Date(safeTime(t.at)).toISOString().slice(0, 10)} · ${t.botName}] ${snippet(t.text, query)}`,
       )
       blocks.push(
         'Excerpts recalled from earlier conversations — this is memory from past sessions. Use it for continuity; do not quote it verbatim unless asked:\n' +
