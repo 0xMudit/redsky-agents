@@ -15,6 +15,8 @@ import type {
   JobTemplate,
   MemoryRow,
   ModelOption,
+  Note,
+  NoteHit,
   Recording,
   RedSkyApi,
   Room,
@@ -61,6 +63,7 @@ interface DemoSnapshot {
   settings: AppSettings
   connectors: Connector[]
   rooms: Room[]
+  notes?: Note[]
   notices: AppNotice[]
   memories: MemoryRow[]
   computers?: CloudComputer[]
@@ -129,7 +132,7 @@ const now = Date.now()
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   const persist = (): void => {
     if (!storage) return
-    const snapshot: DemoSnapshot = { version: STORE_VERSION, bots, settings, connectors, rooms, notices, memories, computers, devices, recordings, handoffs, federated }
+    const snapshot: DemoSnapshot = { version: STORE_VERSION, bots, settings, connectors, rooms, notes, notices, memories, computers, devices, recordings, handoffs, federated }
     try {
       storage.setItem(storageKey, JSON.stringify(snapshot))
     } catch {
@@ -176,6 +179,7 @@ const now = Date.now()
         { id: 'slack', name: 'Slack', description: 'Search threads and draft replies.', status: 'disconnected', updatedAt: now },
       ]
   let rooms: Room[] = seeded?.rooms ?? []
+  let notes: Note[] = seeded?.notes ?? []
   let notices: AppNotice[] = seeded?.notices ?? []
   let memories: MemoryRow[] = seeded?.memories?.length ? seeded.memories : []
   let computers: CloudComputer[] = seeded?.computers ?? []
@@ -222,6 +226,7 @@ const now = Date.now()
       templates: TEMPLATES,
       connectors,
       rooms,
+      notes,
       notices,
       settings,
       runtime: 'opencode',
@@ -372,6 +377,8 @@ const now = Date.now()
     permission: async () => ({ ok: true }),
     files: async () => [],
     fileContent: async () => '',
+    // The browser demo has no real workspace; pretend the bytes landed in the inbox.
+    importFiles: async (files) => files.map((f, i) => `inbox/demo_${Date.now().toString(36)}_${i}_${f.name}`),
     listMemories: async (botId) =>
       memories
         .filter((m) => !botId || !m.botId || m.botId === botId)
@@ -475,6 +482,76 @@ const now = Date.now()
     deleteRoom: async (roomId) => {
       rooms = rooms.filter((r) => r.id !== roomId)
       emit({ source: 'rooms', rooms })
+      return { ok: true }
+    },
+    listNotes: async (opts) => {
+      const sorted = [...notes].sort((a, b) => (Number(b.pinned) - Number(a.pinned)) || b.updatedAt - a.updatedAt)
+      return (opts?.limit ? sorted.slice(0, opts.limit) : sorted).map((n) => ({ ...n }))
+    },
+    // The browser demo has no FTS index; a plain case-insensitive filter stands in.
+    searchNotes: async (query, opts) => {
+      const q = query.trim().toLowerCase()
+      if (!q) return []
+      const limit = opts?.limit ?? 30
+      const hits: NoteHit[] = notes
+        .filter((n) => `${n.title} ${n.body} ${n.tags.join(' ')}`.toLowerCase().includes(q))
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, limit)
+        .map((n) => ({
+          id: n.id,
+          title: n.title || 'Untitled note',
+          snippet: n.body.slice(0, 160),
+          tags: n.tags,
+          updatedAt: n.updatedAt,
+          score: 0,
+        }))
+      return hits
+    },
+    getNote: async (id) => notes.find((n) => n.id === id),
+    createNote: async (payload) => {
+      const at = Date.now()
+      const note: Note = {
+        id: demoId(),
+        title: (payload?.title ?? '').trim(),
+        body: payload?.body ?? '',
+        tags: [...new Set((payload?.tags ?? []).map((t) => t.trim()).filter(Boolean))],
+        pinned: Boolean(payload?.pinned),
+        source: payload?.source,
+        botId: payload?.botId,
+        createdAt: at,
+        updatedAt: at,
+      }
+      notes = [note, ...notes]
+      emit({ source: 'notes', notes })
+      return note
+    },
+    updateNote: async (id, patch) => {
+      const current = notes.find((n) => n.id === id)
+      if (!current) throw new Error('note not found')
+      const next: Note = {
+        ...current,
+        title: patch.title !== undefined ? patch.title.trim() : current.title,
+        body: patch.body !== undefined ? patch.body : current.body,
+        tags: patch.tags !== undefined ? [...new Set(patch.tags.map((t) => t.trim()).filter(Boolean))] : current.tags,
+        pinned: patch.pinned !== undefined ? Boolean(patch.pinned) : current.pinned,
+        updatedAt: Date.now(),
+      }
+      notes = notes.map((n) => (n.id === id ? next : n))
+      emit({ source: 'notes', notes })
+      return next
+    },
+    appendToNote: async (id, text) => {
+      const current = notes.find((n) => n.id === id)
+      if (!current) throw new Error('note not found')
+      const body = current.body.trim() ? `${current.body.replace(/\s+$/, '')}\n\n${text}` : text
+      const next: Note = { ...current, body, updatedAt: Date.now() }
+      notes = notes.map((n) => (n.id === id ? next : n))
+      emit({ source: 'notes', notes })
+      return next
+    },
+    deleteNote: async (id) => {
+      notes = notes.filter((n) => n.id !== id)
+      emit({ source: 'notes', notes })
       return { ok: true }
     },
     listNotices: async () => notices,

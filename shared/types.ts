@@ -171,6 +171,30 @@ export interface Room {
   updatedAt: number
 }
 
+/** A user-authored note (Notion-style). Body is markdown. */
+export interface Note {
+  id: string
+  title: string
+  body: string
+  tags: string[]
+  pinned: boolean
+  /** Where the note came from, e.g. 'manual' or 'selection'. */
+  source?: string
+  botId?: string
+  createdAt: number
+  updatedAt: number
+}
+
+/** Lightweight search result for notes (full-text). */
+export interface NoteHit {
+  id: string
+  title: string
+  snippet: string
+  tags: string[]
+  updatedAt: number
+  score: number
+}
+
 export interface AppSettings {
   version: 1
   privacyMode: boolean
@@ -207,6 +231,7 @@ export interface InitPayload {
   templates: JobTemplate[]
   connectors: Connector[]
   rooms: Room[]
+  notes: Note[]
   notices: AppNotice[]
   settings: AppSettings
   runtime: 'opencode'
@@ -239,6 +264,7 @@ export type EventEnvelope =
   | { source: 'settings'; settings: AppSettings }
   | { source: 'connectors'; connectors: Connector[] }
   | { source: 'rooms'; rooms: Room[] }
+  | { source: 'notes'; notes: Note[] }
   | { source: 'teach'; botId: string; prompt: string }
   | { source: 'notice'; notice: AppNotice }
   | { source: 'notices'; notices: AppNotice[] }
@@ -276,6 +302,8 @@ export interface RedSkyApi {
   }) => Promise<{ ok: boolean }>
   files: (rel?: string) => Promise<FileNode[]>
   fileContent: (rel: string) => Promise<string>
+  /** Copy uploaded files into the workspace inbox and return their workspace-relative paths. */
+  importFiles: (files: { name: string; data: Uint8Array }[]) => Promise<string[]>
   listMemories: (botId?: string) => Promise<MemoryRow[]>
   addMemory: (payload: { key: string; value: string; botId?: string }) => Promise<MemoryRow>
   deleteMemory: (id: string) => Promise<{ ok: boolean }>
@@ -299,6 +327,24 @@ export interface RedSkyApi {
   addToRoom: (roomId: string, botId: string) => Promise<Room>
   renameRoom: (roomId: string, title: string) => Promise<Room>
   deleteRoom: (roomId: string) => Promise<{ ok: boolean }>
+  // Notes — see docs.
+  listNotes: (opts?: { limit?: number }) => Promise<Note[]>
+  searchNotes: (query: string, opts?: { limit?: number }) => Promise<NoteHit[]>
+  getNote: (id: string) => Promise<Note | undefined>
+  createNote: (payload: {
+    title?: string
+    body?: string
+    tags?: string[]
+    pinned?: boolean
+    source?: string
+    botId?: string
+  }) => Promise<Note>
+  updateNote: (
+    id: string,
+    patch: { title?: string; body?: string; tags?: string[]; pinned?: boolean },
+  ) => Promise<Note>
+  appendToNote: (id: string, text: string) => Promise<Note>
+  deleteNote: (id: string) => Promise<{ ok: boolean }>
   listNotices: () => Promise<AppNotice[]>
   markNoticeRead: (id: string) => Promise<AppNotice[]>
   markAllNoticesRead: () => Promise<AppNotice[]>

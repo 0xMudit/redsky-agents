@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { stripThinking, timeLabel } from './format'
-import type { AppNotice, Bot, Connector, EventEnvelope, FileNode, HistoryTurn, JobTemplate, MemoryRow, ModelOption, Room, Routine, SearchHit, SetupCheck } from './types'
+import type { AppNotice, Bot, Connector, EventEnvelope, FileNode, HistoryTurn, JobTemplate, MemoryRow, ModelOption, Note, NoteHit, Room, Routine, SearchHit, SetupCheck } from './types'
 import {
   ActivityIcon,
 ActivityPanel,
   ActivitySummary,
+  applyBase,
   applyMode,
+  applyScale,
   applyTheme,
   ApprovalCard,
   BellIcon,
@@ -16,8 +18,11 @@ ActivityPanel,
   CommandPalette,
   ConnectorsPanel,
   EmptyState,
+  FileIcon,
   GearIcon,
+  getStoredBase,
   getStoredMode,
+  getStoredScale,
   getStoredTheme,
   HistoryIcon,
   HistoryPanel,
@@ -29,6 +34,8 @@ ActivityPanel,
   MessageBlock,
   ModeIcon,
   NavItem,
+  NotesIcon,
+  NotesPanel,
   PaletteIcon,
   PanelHeader,
   PlugIcon,
@@ -37,6 +44,8 @@ ActivityPanel,
   RoomsPanel,
   RoutineIcon,
   RoutinePanel,
+  SearchIcon,
+  SearchPalette,
   SendIcon,
   SettingsPanel,
   SparkIcon,
@@ -46,18 +55,11 @@ ActivityPanel,
   TrafficLights,
   WorkingWindow,
 } from './ui'
-import type { Command, MenuItem, Mode, ThemeName } from './ui'
+import type { BaseThemeName, Command, MenuItem, Mode, SearchResult, ThemeName } from './ui'
 import type { AppSettings } from './types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -67,7 +69,12 @@ import {
 import { ConfirmHost, alertDialog, confirmDialog } from '@/components/ui/confirm'
 
 type Boot = 'starting' | 'online' | 'offline'
-type Panel = 'none' | 'activity' | 'notices' | 'rooms' | 'memory' | 'history' | 'routines' | 'connectors' | 'settings'
+type Panel = 'none' | 'activity' | 'notices' | 'rooms' | 'memory' | 'notes' | 'history' | 'routines' | 'connectors' | 'settings'
+
+// Composer attachments: reject anything over 10MB, label chips with a short name.
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024
+const ATTACH_NAME_LIMIT = 12
+const shortAttachName = (name: string): string => (name.length > ATTACH_NAME_LIMIT ? `${name.slice(0, ATTACH_NAME_LIMIT - 1)}…` : name)
 
 const STREAK_KEY = 'redsky.streak'
 const QUICK = [
@@ -192,6 +199,10 @@ export default function App(): React.JSX.Element {
   const [history, setHistory] = useState<HistoryTurn[]>([])
   const [routines, setRoutines] = useState<Routine[]>([])
   const [rooms, setRooms] = useState<Room[]>([])
+  const [notes, setNotes] = useState<Note[]>([])
+  const [capture, setCapture] = useState<string | null>(null)
+  const [captureQuery, setCaptureQuery] = useState('')
+  const [captureHits, setCaptureHits] = useState<NoteHit[]>([])
   const [templates, setTemplates] = useState<JobTemplate[]>([])
   const [files, setFiles] = useState<FileNode[]>([])
   const [fileView, setFileView] = useState<{ path: string; content: string } | null>(null)
@@ -205,8 +216,12 @@ export default function App(): React.JSX.Element {
   const [streak, setStreak] = useState(loadStreak)
   const [showJump, setShowJump] = useState(false)
   const [palette, setPalette] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [attachments, setAttachments] = useState<{ path: string; name: string; isImage: boolean }[]>([])
   const [theme, setTheme] = useState<ThemeName>(getStoredTheme)
+  const [base, setBase] = useState<BaseThemeName>(getStoredBase)
   const [mode, setMode] = useState<Mode>(getStoredMode)
+  const [scale, setScale] = useState<number>(getStoredScale)
   // Whether the Rooms/Schedules/Memory/… app tools drawer is open in the sidebar.
   const [sectionsOpen, setSectionsOpen] = useState(() => {
     try {
@@ -219,6 +234,7 @@ export default function App(): React.JSX.Element {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null)
   const threadRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const stickRef = useRef(true)
   const selectedIdRef = useRef<string | null>(null)
   const lastPanelRef = useRef<Exclude<Panel, 'none'>>('activity')
@@ -240,8 +256,16 @@ export default function App(): React.JSX.Element {
   }, [theme])
 
   useEffect(() => {
+    applyBase(base)
+  }, [base])
+
+  useEffect(() => {
     applyMode(mode)
   }, [mode])
+
+  useEffect(() => {
+    applyScale(scale)
+  }, [scale])
 
   useEffect(() => {
     void api
@@ -255,6 +279,7 @@ export default function App(): React.JSX.Element {
         setMemories(p.memories)
         setRoutines(p.routines)
         setRooms(p.rooms ?? [])
+        setNotes(p.notes ?? [])
         setTemplates(p.templates)
         setSettings(p.settings)
         setConnectors(p.connectors ?? [])
@@ -299,6 +324,7 @@ export default function App(): React.JSX.Element {
       if (evt.source === 'notices') setNotices(evt.notices)
       if (evt.source === 'connectors') setConnectors(evt.connectors)
       if (evt.source === 'rooms') setRooms(evt.rooms)
+      if (evt.source === 'notes') setNotes(evt.notes)
       if (evt.source === 'settings') setSettings(evt.settings)
     })
     return off
@@ -342,6 +368,7 @@ export default function App(): React.JSX.Element {
     if (panel === 'routines') void api.listRoutines().then(setRoutines)
     if (panel === 'connectors') void api.listConnectors().then(setConnectors)
     if (panel === 'rooms') void api.listRooms().then(setRooms)
+    if (panel === 'notes') void api.listNotes().then(setNotes)
   }, [panel, selected?.id, selected?.computer.length])
 
   const scrollToEnd = useCallback((smooth = false) => {
@@ -444,6 +471,79 @@ export default function App(): React.JSX.Element {
       .catch(() => undefined)
   }, [])
 
+  // Global search across agents, conversations, workspace files and notes.
+  const runGlobalSearch = useCallback(
+    async (query: string): Promise<SearchResult[]> => {
+      const q = query.trim().toLowerCase()
+      if (!q) return []
+      const out: SearchResult[] = []
+      for (const b of bots) {
+        if (b.archived) continue
+        if (`${b.name} ${b.job}`.toLowerCase().includes(q)) {
+          out.push({
+            id: `agent-${b.id}`,
+            group: 'Agents',
+            title: b.name,
+            subtitle: b.job || b.preview,
+            icon: <BlobAvatar hue={b.hue} size={16} />,
+            run: () => openBot(b.id),
+          })
+        }
+      }
+      try {
+        const hits = await api.search(q)
+        for (const h of hits) {
+          if (h.kind === 'message') {
+            const botId = h.botId
+            out.push({
+              id: h.id,
+              group: 'Chats',
+              title: h.title,
+              subtitle: h.snippet,
+              icon: <IonIcon name="chatbubble-outline" size={15} />,
+              run: () => {
+                if (botId) openBot(botId)
+              },
+            })
+          } else if (h.kind === 'file') {
+            out.push({ id: h.id, group: 'Files', title: h.title, subtitle: h.snippet, icon: <FileIcon />, run: () => openHit(h) })
+          } else if (h.kind === 'memory') {
+            out.push({ id: h.id, group: 'Memory', title: h.title, subtitle: h.snippet, icon: <MemoryIcon />, run: () => setPanel('memory') })
+          } else if (h.kind === 'agent' && h.botId) {
+            const botId = h.botId
+            out.push({
+              id: h.id,
+              group: 'Agents',
+              title: h.title,
+              subtitle: h.snippet,
+              icon: <BlobAvatar hue={botId} size={16} />,
+              run: () => openBot(botId),
+            })
+          }
+        }
+      } catch {
+        /* search is best-effort */
+      }
+      try {
+        const noteHits = await api.searchNotes(q, { limit: 8 })
+        for (const n of noteHits) {
+          out.push({
+            id: `note-${n.id}`,
+            group: 'Notes',
+            title: n.title || 'Untitled note',
+            subtitle: n.snippet,
+            icon: <NotesIcon />,
+            run: () => setPanel('notes'),
+          })
+        }
+      } catch {
+        /* notes are best-effort */
+      }
+      return out.slice(0, 40)
+    },
+    [bots, openBot, openHit, setPanel],
+  )
+
   const newAgent = useCallback(
     async (tpl?: JobTemplate) => {
       try {
@@ -474,7 +574,8 @@ export default function App(): React.JSX.Element {
   const send = useCallback(
     async (preset?: string) => {
       const text = (preset ?? composer).trim()
-      if (!setupReady || !text || sending) return
+      const files = preset ? [] : attachments.map((a) => a.path)
+      if (!setupReady || (!text && files.length === 0) || sending) return
       setSending(true)
       stickRef.current = true
       try {
@@ -485,9 +586,12 @@ export default function App(): React.JSX.Element {
           openBot(bot.id)
         }
         if (bot.status === 'running') return
-        const next = await api.send(bot.id, { text, model: model || undefined })
+        const next = await api.send(bot.id, { text, model: model || undefined, ...(files.length ? { attachments: files } : {}) })
         upsertBot(next)
-        if (!preset) setComposer('')
+        if (!preset) {
+          setComposer('')
+          setAttachments([])
+        }
         setStreak(bumpStreak())
         requestAnimationFrame(() => scrollToEnd(true))
       } catch (err) {
@@ -496,8 +600,48 @@ export default function App(): React.JSX.Element {
         setSending(false)
       }
     },
-    [composer, sending, selected, model, upsertBot, openBot, scrollToEnd, setupReady],
+    [composer, sending, selected, model, attachments, upsertBot, openBot, scrollToEnd, setupReady],
   )
+
+  const pickFiles = useCallback(() => fileInputRef.current?.click(), [])
+
+  const removeAttachment = useCallback((path: string) => {
+    setAttachments((prev) => prev.filter((a) => a.path !== path))
+  }, [])
+
+  const onFilesPicked = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    if (!picked.length) return
+    const tooBig = picked.filter((f) => f.size > MAX_ATTACH_BYTES)
+    const ok = picked.filter((f) => f.size <= MAX_ATTACH_BYTES)
+    if (tooBig.length) {
+      void alertDialog({
+        title: 'File too large',
+        body: `Attachments must be 10MB or smaller. Skipped: ${tooBig.map((f) => f.name).join(', ')}.`,
+      })
+    }
+    if (!ok.length) return
+    try {
+      const payload = await Promise.all(
+        ok.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) })),
+      )
+      const paths = await api.importFiles(payload)
+      setAttachments((prev) => {
+        const seen = new Set(prev.map((a) => a.path))
+        const next = [...prev]
+        ok.forEach((f, i) => {
+          const p = paths[i]
+          if (!p || seen.has(p)) return
+          seen.add(p)
+          next.push({ path: p, name: f.name, isImage: f.type.startsWith('image/') })
+        })
+        return next
+      })
+    } catch (err) {
+      void alertDialog({ title: 'Could not attach files', body: (err as Error).message })
+    }
+  }, [])
 
   const saveEditor = useCallback(async () => {
     if (!selected || !editor) return
@@ -621,6 +765,34 @@ export default function App(): React.JSX.Element {
   )
   const openPanel = useCallback((p: Panel) => setPanel((cur) => (cur === p ? 'none' : p)), [])
 
+  const openNoteCapture = useCallback((text: string) => {
+    setCapture(text.trim())
+    setCaptureQuery('')
+    setCaptureHits([])
+  }, [])
+
+  // Keep the capture dialog's search list fresh, and search as the user types.
+  useEffect(() => {
+    if (capture === null) return
+    const q = captureQuery.trim()
+    if (!q) {
+      setCaptureHits([])
+      return
+    }
+    let cancelled = false
+    void api
+      .searchNotes(q, { limit: 20 })
+      .then((rows) => {
+        if (!cancelled) setCaptureHits(rows)
+      })
+      .catch(() => {
+        if (!cancelled) setCaptureHits([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [capture, captureQuery, notes])
+
   const panelOpen = panel !== 'none'
   useEffect(() => {
     if (panel !== 'none') lastPanelRef.current = panel
@@ -638,6 +810,7 @@ export default function App(): React.JSX.Element {
       { id: 'rooms', group: 'Actions', label: 'Open rooms', keywords: 'multi agent', icon: <RoomsIcon />, run: () => openPanel('rooms') },
       { id: 'routines', group: 'Actions', label: 'Open schedules', keywords: 'routine cron recurring', icon: <RoutineIcon />, run: () => openPanel('routines') },
       { id: 'memory', group: 'Actions', label: 'Open memory', keywords: 'notes context', icon: <MemoryIcon />, run: () => openPanel('memory') },
+      { id: 'notes', group: 'Actions', label: 'Open notes', keywords: 'notebook scratchpad jot', icon: <NotesIcon />, run: () => openPanel('notes') },
       { id: 'connectors', group: 'Actions', label: 'Open connectors', keywords: 'integrations tools', icon: <PlugIcon />, run: () => openPanel('connectors') },
     ]
     if (selected) {
@@ -839,6 +1012,7 @@ export default function App(): React.JSX.Element {
             <NavItem active={panel === 'rooms'} onClick={() => openPanel('rooms')} icon={<IonIcon name="people-outline" size={16} />} label="Rooms" />
             <NavItem active={panel === 'routines'} onClick={() => openPanel('routines')} icon={<IonIcon name="calendar-outline" size={16} />} label="Schedules" />
             <NavItem active={panel === 'memory'} onClick={() => openPanel('memory')} icon={<IonIcon name="library-outline" size={16} />} label="Memory" />
+            <NavItem active={panel === 'notes'} onClick={() => openPanel('notes')} icon={<IonIcon name="document-text-outline" size={16} />} label="Notes" />
             <NavItem active={panel === 'history'} onClick={() => openPanel('history')} icon={<IonIcon name="time-outline" size={16} />} label="History" />
             <NavItem active={panel === 'connectors'} onClick={() => openPanel('connectors')} icon={<IonIcon name="git-network-outline" size={16} />} label="Connectors" />
             <NavItem active={panel === 'settings'} onClick={() => openPanel('settings')} icon={<IonIcon name="settings-outline" size={16} />} label="Settings" />
@@ -899,6 +1073,16 @@ export default function App(): React.JSX.Element {
             </span>
           )}
           <div className="window-no-drag ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              className="window-no-drag flex h-auto items-center gap-1.5 text-[11.5px] pl-2.5 pr-2 py-1.5 rounded-lg pressable hover:bg-[var(--bg-hover)]"
+              style={{ color: 'var(--text-secondary)', border: '0.5px solid var(--border)' }}
+              title="Search everything"
+            >
+              <SearchIcon />
+              <span className="hidden md:inline">Search</span>
+            </button>
             <IconBtn active={false} onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')} title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
               <ModeIcon />
             </IconBtn>
@@ -913,18 +1097,6 @@ export default function App(): React.JSX.Element {
               <span className="hidden lg:inline">Commands</span>
               <span className="cmdk-kbd">{modKey} K</span>
             </Button>
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger className="h-auto text-[11.5px] px-2 py-1.5 max-w-48 rounded-lg" style={{ color: 'var(--text-secondary)', border: '0.5px solid var(--border)' }}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {models.map((m) => (
-                  <SelectItem key={m.id || m.label} value={m.id}>
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <IconBtn active={panel === 'activity'} onClick={() => openPanel('activity')} title="Activity panel">
               <ActivityIcon />
             </IconBtn>
@@ -1015,6 +1187,7 @@ export default function App(): React.JSX.Element {
                             }
                           : undefined
                       }
+                      onAddToNote={(text) => openNoteCapture(text)}
                     />
                   ))}
 
@@ -1080,14 +1253,45 @@ export default function App(): React.JSX.Element {
 
             <footer className="px-6 pb-5 pt-2">
               <div className="mx-auto w-full max-w-3xl">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => void onFilesPicked(e)}
+                />
+                {attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {attachments.map((a) => (
+                      <span
+                        key={a.path}
+                        className="flex items-center gap-1.5 rounded-full pl-2 pr-1 py-1 text-[11.5px]"
+                        style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+                        title={a.name}
+                      >
+                        {a.isImage ? <IonIcon name="image-outline" size={13} /> : <FileIcon />}
+                        <span className="max-w-[160px] truncate">{shortAttachName(a.name)}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(a.path)}
+                          title="Remove attachment"
+                          className="w-4 h-4 flex items-center justify-center rounded-full hover:bg-[var(--bg-hover)] pressable"
+                          style={{ color: 'var(--text-tertiary)' }}
+                        >
+                          <IonIcon name="close-outline" size={13} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className={`flex items-end gap-2 rounded-2xl px-2.5 py-2${selected?.status === 'running' ? ' composer-running' : ''}`} style={{ background: 'var(--raised)', border: '0.5px solid var(--border)' }}>
                   <Button
                     variant="secondary"
                     size="icon"
                     className="w-8 h-8 shrink-0 rounded-full pressable"
                     style={{ background: 'var(--fill-secondary)', color: 'var(--text-secondary)' }}
-                    title="New agent"
-                    onClick={() => void newAgent()}
+                    title="Attach files or images"
+                    onClick={pickFiles}
                   >
                     <PlusIcon size={15} />
                   </Button>
@@ -1126,7 +1330,7 @@ export default function App(): React.JSX.Element {
                     <Button
                       size="icon"
                       onClick={() => void send()}
-                      disabled={sending || !composer.trim() || boot !== 'online'}
+                      disabled={sending || (!composer.trim() && !attachments.length) || boot !== 'online'}
                       className="w-8 h-8 shrink-0 rounded-full pressable"
                       style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}
                       title="Send"
@@ -1220,10 +1424,11 @@ export default function App(): React.JSX.Element {
               )}
               {activePanel === 'rooms' && <RoomsPanel rooms={rooms} bots={bots} onChange={setRooms} onClose={() => setPanel('none')} />}
               {activePanel === 'memory' && <MemoryPanel memories={memories} botId={selected?.id} onChange={setMemories} onClose={() => setPanel('none')} />}
+              {activePanel === 'notes' && <NotesPanel notes={notes} onChange={setNotes} onClose={() => setPanel('none')} />}
               {activePanel === 'history' && <HistoryPanel history={history} onOpen={(id) => { void openBot(id); setPanel('none') }} onClose={() => setPanel('none')} />}
               {activePanel === 'routines' && <RoutinePanel routines={routines} bots={bots} selectedId={selected?.id} onChange={setRoutines} onClose={() => setPanel('none')} />}
               {activePanel === 'connectors' && <ConnectorsPanel connectors={connectors} onChange={setConnectors} onClose={() => setPanel('none')} />}
-              {activePanel === 'settings' && settings && <SettingsPanel settings={settings} theme={theme} mode={mode} onChange={setSettings} onTheme={setTheme} onMode={setMode} onClose={() => setPanel('none')} />}
+              {activePanel === 'settings' && settings && <SettingsPanel settings={settings} theme={theme} base={base} mode={mode} scale={scale} models={models} model={model} onChange={setSettings} onTheme={setTheme} onBase={setBase} onMode={setMode} onScale={setScale} onModel={setModel} onClose={() => setPanel('none')} />}
             </div>
           </aside>
         </div>
@@ -1318,6 +1523,85 @@ export default function App(): React.JSX.Element {
         )}
       </Dialog>
 
+      {/* ── Add-to-note capture ─────────────────────────────────── */}
+      <Dialog open={capture !== null} onOpenChange={(open) => { if (!open) setCapture(null) }}>
+        <DialogContent className="w-[460px] max-w-[calc(100%-2rem)] gap-3">
+          <DialogHeader>
+            <div className="flex items-center gap-2.5">
+              <IonIcon name="document-text-outline" size={18} style={{ color: 'var(--text-accent)' }} />
+              <DialogTitle>Add to note</DialogTitle>
+            </div>
+          </DialogHeader>
+          <p
+            className="text-[12.5px] leading-[20px] rounded-[10px] px-3 py-2 max-h-[110px] overflow-y-auto border-l-2"
+            style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)', borderColor: 'var(--text-accent)' }}
+          >
+            {capture}
+          </p>
+          <Input
+            autoFocus
+            value={captureQuery}
+            onChange={(e) => setCaptureQuery(e.target.value)}
+            placeholder="Search notes, or leave blank to pick one…"
+            className="w-full h-auto rounded-[10px] px-3 py-2 text-[13px]"
+            style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}
+          />
+          <div className="max-h-[260px] overflow-y-auto space-y-1">
+            <button
+              onClick={() => {
+                void api
+                  .createNote({ title: '', body: capture ?? '', source: 'selection', botId: selected?.id })
+                  .then(() => api.listNotes())
+                  .then((list) => {
+                    setNotes(list)
+                    setCapture(null)
+                    setPanel('notes')
+                  })
+              }}
+              className="w-full text-left rounded-[10px] px-3 py-2 text-[13px] font-medium pressable hover:bg-[var(--bg-hover)]"
+              style={{ background: 'var(--bg-card)', color: 'var(--text-accent)', border: '0.5px solid var(--border)' }}
+            >
+              + Create a new note
+            </button>
+            {(captureQuery.trim() ? captureHits : notes.slice(0, 12)).map((row) => {
+              const id = 'id' in row ? row.id : ''
+              const title = 'title' in row ? row.title : ''
+              const snippet = 'snippet' in row ? row.snippet : row.body.replace(/\s+/g, ' ').slice(0, 120)
+              return (
+                <button
+                  key={id}
+                  onClick={() => {
+                    void api
+                      .appendToNote(id, capture ?? '')
+                      .then(() => api.listNotes())
+                      .then((list) => {
+                        setNotes(list)
+                        setCapture(null)
+                      })
+                  }}
+                  className="w-full text-left rounded-[10px] px-3 py-2 pressable hover:bg-[var(--bg-hover)]"
+                  style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}
+                >
+                  <div className="text-[12.5px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                    {title || 'Untitled note'}
+                  </div>
+                  {snippet ? (
+                    <p className="text-[11px] mt-0.5 line-clamp-1" style={{ color: 'var(--text-tertiary)' }}>
+                      {snippet}
+                    </p>
+                  ) : null}
+                </button>
+              )
+            })}
+            {captureQuery.trim() && !captureHits.length && (
+              <p className="text-[12px] px-1 py-1" style={{ color: 'var(--text-tertiary)' }}>
+                No matches — create a new note instead.
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {!setupReady && (
         <div
           className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-6 px-10 modal-overlay"
@@ -1358,8 +1642,7 @@ export default function App(): React.JSX.Element {
               />
               <SetupCheckRow
                 label="Model provider configured"
-                resolved={setup !== null}
-                ok={models.length > 0}
+                resolved={models.length > 0}
                 delay={2}
               />
               <SetupCheckRow
@@ -1396,6 +1679,8 @@ export default function App(): React.JSX.Element {
       )}
 
       <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} />
+
+      <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} search={runGlobalSearch} />
 
       <ConfirmHost />
     </div>

@@ -6,12 +6,17 @@ import {
   calendarOutline,
   chevronDownOutline,
   chevronUpOutline,
+  closeOutline,
+  documentTextOutline,
   gitNetworkOutline,
+  imageOutline,
   libraryOutline,
   peopleOutline,
+  pinOutline,
   searchOutline,
   settingsOutline,
   timeOutline,
+  trashOutline,
 } from 'ionicons/icons'
 import { api } from './api'
 import { confirmDialog } from '@/components/ui/confirm'
@@ -26,6 +31,9 @@ import type {
   HistoryTurn,
   JobTemplate,
   MemoryRow,
+  ModelOption,
+  Note,
+  NoteHit,
   ReviewMode,
   Room,
   Routine,
@@ -104,6 +112,88 @@ export function applyTheme(name: ThemeName): void {
   }
 }
 
+/* ── Base themes. `data-base` lives on <html> and swaps the full shadcn
+   surface/type/radius set (see themes.css). Independent of the accent axis
+   above, which only re-tints the brand colour. Supabase is the default. ── */
+
+export type BaseThemeName =
+  | 'supabase'
+  | 'notebook'
+  | 'mono'
+  | 'sage-garden'
+  | 'catppuccin'
+  | 'amber-minimal'
+  | 'claude'
+  | 't3-chat'
+
+/* swatch is each theme's own primary colour, so the picker reads at a glance. */
+export const BASE_THEMES: { name: BaseThemeName; label: string; swatch: string }[] = [
+  { name: 'supabase', label: 'Supabase', swatch: 'oklch(0.8348 0.1302 160.9080)' },
+  { name: 'notebook', label: 'Notebook', swatch: 'oklch(0.4891 0 0)' },
+  { name: 'mono', label: 'Mono', swatch: 'oklch(0.5555 0 0)' },
+  { name: 'sage-garden', label: 'Sage Garden', swatch: 'oklch(0.6333 0.0309 154.9039)' },
+  { name: 'catppuccin', label: 'Catppuccin', swatch: 'oklch(0.5547 0.2503 297.0156)' },
+  { name: 'amber-minimal', label: 'Amber', swatch: 'oklch(0.7686 0.1647 70.0804)' },
+  { name: 'claude', label: 'Claude', swatch: 'oklch(0.6171 0.1375 39.0427)' },
+  { name: 't3-chat', label: 'T3 Chat', swatch: 'oklch(0.5316 0.1409 355.1999)' },
+]
+
+const BASE_KEY = 'redsky.base'
+
+export function getStoredBase(): BaseThemeName {
+  try {
+    const raw = localStorage.getItem(BASE_KEY) as BaseThemeName | null
+    if (raw && BASE_THEMES.some((t) => t.name === raw)) return raw
+  } catch {
+    /* ignore */
+  }
+  return 'supabase'
+}
+
+export function applyBase(name: BaseThemeName): void {
+  try {
+    document.documentElement.dataset.base = name
+    localStorage.setItem(BASE_KEY, name)
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ── Font/UI scale. Whole-interface zoom on <html> (px-sized UI can't ride a
+   root font-size), persisted so the inline script can restore it pre-paint. ── */
+
+export const SCALE_MIN = 0.9
+export const SCALE_MAX = 1.4
+export const SCALE_STEP = 0.05
+
+const SCALE_KEY = 'redsky.scale'
+
+export function clampScale(scale: number): number {
+  const rounded = Math.round(scale * 100) / 100
+  return Math.min(SCALE_MAX, Math.max(SCALE_MIN, rounded))
+}
+
+export function getStoredScale(): number {
+  try {
+    const raw = Number(localStorage.getItem(SCALE_KEY))
+    if (Number.isFinite(raw) && raw >= SCALE_MIN && raw <= SCALE_MAX) return clampScale(raw)
+  } catch {
+    /* ignore */
+  }
+  return 1
+}
+
+export function applyScale(scale: number): void {
+  try {
+    const next = clampScale(scale)
+    if (next === 1) document.documentElement.style.removeProperty('zoom')
+    else document.documentElement.style.zoom = String(next)
+    localStorage.setItem(SCALE_KEY, String(next))
+  } catch {
+    /* ignore */
+  }
+}
+
 /* ── Light / dark mode. `data-mode` lives on <html>. ───────── */
 
 export type Mode = 'dark' | 'light'
@@ -169,9 +259,14 @@ function registerIonicons(): void {
     libraryOutline,
     timeOutline,
     gitNetworkOutline,
+    imageOutline,
     settingsOutline,
     chevronDownOutline,
     chevronUpOutline,
+    closeOutline,
+    documentTextOutline,
+    pinOutline,
+    trashOutline,
   })
 }
 
@@ -472,6 +567,166 @@ export function CommandPalette({
   )
 }
 
+export interface SearchResult {
+  id: string
+  group: string
+  title: string
+  subtitle?: string
+  icon?: React.ReactNode
+  run: () => void
+}
+
+/** Global search surface — same chrome as the command palette, but async + grouped. */
+export function SearchPalette({
+  open,
+  onClose,
+  search,
+}: {
+  open: boolean
+  onClose: () => void
+  search: (query: string) => Promise<SearchResult[]>
+}): React.JSX.Element | null {
+  const [q, setQ] = useState('')
+  const [results, setResults] = useState<SearchResult[]>([])
+  const [active, setActive] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (open) {
+      setQ('')
+      setResults([])
+      setActive(0)
+      requestAnimationFrame(() => inputRef.current?.focus())
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const query = q.trim()
+    if (!query) {
+      setResults([])
+      setLoading(false)
+      return
+    }
+    let live = true
+    setLoading(true)
+    const timer = setTimeout(() => {
+      void search(query)
+        .then((r) => {
+          if (!live) return
+          setResults(r)
+          setActive(0)
+        })
+        .catch(() => {
+          if (live) setResults([])
+        })
+        .finally(() => {
+          if (live) setLoading(false)
+        })
+    }, 180)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [q, open, search])
+
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
+  }, [active, results])
+
+  if (!open) return null
+
+  const grouped = results.reduce<Record<string, SearchResult[]>>((acc, r) => {
+    ;(acc[r.group] ??= []).push(r)
+    return acc
+  }, {})
+
+  const onKey = (e: React.KeyboardEvent): void => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActive((a) => Math.min(a + 1, results.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActive((a) => Math.max(a - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      results[active]?.run()
+      onClose()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+    }
+  }
+
+  let idx = -1
+  return (
+    <div className="cmdk-overlay" onMouseDown={onClose}>
+      <div className="cmdk-panel" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-label="Search">
+        <div className="cmdk-input-row">
+          <span style={{ color: 'var(--text-accent)' }}>
+            <SearchIcon />
+          </span>
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={onKey}
+            placeholder="Search agents, chats, files, notes…"
+            className="cmdk-input"
+          />
+          <span className="cmdk-kbd">esc</span>
+        </div>
+        <div className="cmdk-list" ref={listRef}>
+          {Object.entries(grouped).map(([group, items]) => (
+            <div key={group}>
+              <div className="cmdk-group-label">{group}</div>
+              {items.map((r) => {
+                idx += 1
+                const i = idx
+                return (
+                  <button
+                    key={r.id}
+                    data-active={i === active}
+                    onMouseMove={() => setActive(i)}
+                    onClick={() => {
+                      r.run()
+                      onClose()
+                    }}
+                    className="cmdk-item sub"
+                  >
+                    <span className="cmdk-ic">{r.icon ?? <SearchIcon />}</span>
+                    <span className="cmdk-col">
+                      <span className="cmdk-title">{r.title}</span>
+                      {r.subtitle ? <span className="cmdk-sub">{r.subtitle}</span> : null}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          ))}
+          {!results.length && (
+            <div className="cmdk-empty">{loading ? 'Searching…' : q.trim() ? `No matches for “${q}”.` : 'Type to search agents, chats, files and notes.'}</div>
+          )}
+        </div>
+        <div className="cmdk-foot">
+          <span>
+            <span className="cmdk-kbd">↑</span>
+            <span className="cmdk-kbd">↓</span>navigate
+          </span>
+          <span>
+            <span className="cmdk-kbd">↵</span>open
+          </span>
+          <span>
+            <span className="cmdk-kbd">esc</span>close
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ── Conversation ──────────────────────────────────────────── */
 export function MessageBlock({
   role,
@@ -490,6 +745,7 @@ export function MessageBlock({
   onDelete,
   onResend,
   onBranch,
+  onAddToNote,
 }: {
   role: ChatMessage['role']
   text: string
@@ -507,8 +763,37 @@ export function MessageBlock({
   onDelete?: () => void
   onResend?: () => void
   onBranch?: () => void
+  onAddToNote?: (text: string) => void
 }): React.JSX.Element {
   const html = useMemo(() => renderMarkdown(text), [text])
+  const bodyRef = useRef<HTMLDivElement>(null)
+  // Right-clicking a reply opens its actions. If the user highlighted text first,
+  // the action applies to that selection; otherwise to the whole reply.
+  const bodyText = (): string => {
+    const selection = window.getSelection()
+    const selected = selection?.toString().trim() ?? ''
+    if (selected && selection && selection.rangeCount > 0 && bodyRef.current?.contains(selection.anchorNode)) {
+      return selected
+    }
+    return text
+  }
+  const withNoteMenu = (node: React.JSX.Element): React.JSX.Element =>
+    onAddToNote ? (
+      <RadixContextMenu>
+        <ContextMenuTrigger asChild>{node}</ContextMenuTrigger>
+        <ContextMenuContent className="w-44">
+          <ContextMenuItem onSelect={() => onAddToNote(bodyText())} className="gap-2">
+            <span className="rs-menu-icon">
+              <IonIcon name="document-text-outline" size={14} />
+            </span>
+            <span className="flex-1 text-left">Add to note</span>
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => void navigator.clipboard.writeText(bodyText())} className="gap-2">
+            <span className="flex-1 text-left">Copy</span>
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </RadixContextMenu>
+    ) : node
   const onMarkdownClick = (e: React.MouseEvent<HTMLDivElement>): void => {
     const btn = (e.target as HTMLElement).closest('.code-copy') as HTMLElement | null
     if (!btn) return
@@ -588,8 +873,8 @@ export function MessageBlock({
     )
   }
   if (role === 'user') {
-    return (
-      <div className="group flex flex-col items-end message-in">
+    return withNoteMenu(
+      <div ref={bodyRef} className="group flex flex-col items-end message-in">
         <div
           className="rounded-2xl rounded-br-md px-4 py-2.5 text-[14px] leading-[22px] whitespace-pre-wrap max-w-[72%]"
           style={{ background: 'var(--bubble-user)', color: 'var(--bubble-user-ink)', fontWeight: 450 }}
@@ -597,11 +882,11 @@ export function MessageBlock({
           {text}
         </div>
         {actions}
-      </div>
+      </div>,
     )
   }
-  return (
-    <div className="group flex gap-3 items-start message-in">
+  return withNoteMenu(
+    <div ref={bodyRef} className="group flex gap-3 items-start message-in">
       <BlobAvatar hue={hue} size={30} />
       <div className="min-w-0 flex-1">
         <div
@@ -615,7 +900,7 @@ export function MessageBlock({
         </div>
         {actions}
       </div>
-    </div>
+    </div>,
   )
 }
 
@@ -1307,6 +1592,237 @@ export function MemoryPanel({
   )
 }
 
+export function NotesPanel({
+  notes,
+  onChange,
+  onClose,
+}: {
+  notes: Note[]
+  onChange: (n: Note[]) => void
+  onClose?: () => void
+}): React.JSX.Element {
+  const [query, setQuery] = useState('')
+  const [hits, setHits] = useState<NoteHit[] | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<{ title: string; body: string; tags: string } | null>(null)
+  const [preview, setPreview] = useState(false)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const editing = editingId ? notes.find((n) => n.id === editingId) ?? null : null
+
+  // Full-text search when a query is present; otherwise the recency-ordered list.
+  useEffect(() => {
+    const q = query.trim()
+    if (!q) {
+      setHits(null)
+      return
+    }
+    let cancelled = false
+    void api
+      .searchNotes(q, { limit: 40 })
+      .then((rows) => {
+        if (!cancelled) setHits(rows)
+      })
+      .catch(() => {
+        if (!cancelled) setHits([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [query, notes])
+
+  const openEditor = (note: Note): void => {
+    setEditingId(note.id)
+    setDraft({ title: note.title, body: note.body, tags: note.tags.join(', ') })
+    setPreview(false)
+  }
+
+  const createNote = async (): Promise<void> => {
+    const note = await api.createNote({ title: '', body: '', source: 'manual' })
+    onChange([note, ...notes])
+    openEditor(note)
+  }
+
+  // Debounced autosave: the editor is a live document, not a form with a button.
+  const queueSave = (next: { title: string; body: string; tags: string }): void => {
+    setDraft(next)
+    if (!editingId) return
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      void api
+        .updateNote(editingId, {
+          title: next.title,
+          body: next.body,
+          tags: next.tags.split(',').map((t) => t.trim()).filter(Boolean),
+        })
+        .then(() => api.listNotes())
+        .then(onChange)
+        .catch(() => undefined)
+    }, 500)
+  }
+
+  const removeNote = async (id: string): Promise<void> => {
+    if (!(await confirmDialog({ title: 'Delete note?', body: 'This cannot be undone.', confirmLabel: 'Delete', danger: true }))) return
+    await api.deleteNote(id)
+    onChange(notes.filter((n) => n.id !== id))
+    if (editingId === id) setEditingId(null)
+  }
+
+  if (editing && draft) {
+    const tags = draft.tags.split(',').map((t) => t.trim()).filter(Boolean)
+    return (
+      <>
+        <PanelHeader
+          title="Note"
+          subtitle="Markdown, autosaved."
+          onClose={onClose}
+          action={
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPreview((p) => !p)}
+                className="text-[11px] px-2 py-0.5 rounded-md hover:bg-[var(--bg-hover)]"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                {preview ? 'Edit' : 'Preview'}
+              </button>
+              <button
+                onClick={() => void api.updateNote(editing.id, { pinned: !editing.pinned }).then(() => api.listNotes()).then(onChange)}
+                aria-label={editing.pinned ? 'Unpin note' : 'Pin note'}
+                className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-[var(--bg-hover)]"
+                style={{ color: editing.pinned ? 'var(--text-accent)' : 'var(--text-tertiary)' }}
+              >
+                <IonIcon name="pin-outline" size={14} />
+              </button>
+              <button
+                onClick={() => void removeNote(editing.id)}
+                aria-label="Delete note"
+                className="w-6 h-6 flex items-center justify-center rounded-md hover:bg-[var(--bg-hover)]"
+                style={{ color: 'var(--text-tertiary)' }}
+              >
+                <IonIcon name="trash-outline" size={14} />
+              </button>
+            </div>
+          }
+        />
+        <div className="flex-1 overflow-y-auto p-3 grid gap-2 content-start">
+          <button
+            onClick={() => setEditingId(null)}
+            className="self-start text-[11px] mb-1 hover:underline"
+            style={{ color: 'var(--text-tertiary)' }}
+          >
+            ← All notes
+          </button>
+          <Input
+            value={draft.title}
+            onChange={(e) => queueSave({ ...draft, title: e.target.value })}
+            placeholder="Untitled"
+            className="h-auto rounded-[10px] px-2.5 py-2 text-[15px] font-semibold"
+            style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)' }}
+          />
+          <Input
+            value={draft.tags}
+            onChange={(e) => queueSave({ ...draft, tags: e.target.value })}
+            placeholder="tags, comma, separated"
+            className="h-auto rounded-[10px] px-2.5 py-1.5 text-[11px]"
+            style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+          />
+          {preview ? (
+            <div
+              className="markdown-body text-[13px] leading-[21px] rounded-[10px] px-3 py-2.5 min-h-[120px]"
+              style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(draft.body) }}
+            />
+          ) : (
+            <Textarea
+              value={draft.body}
+              onChange={(e) => queueSave({ ...draft, body: e.target.value })}
+              placeholder="Write in markdown…"
+              className="w-full rounded-[10px] px-3 py-2.5 text-[13px] leading-[21px] resize-y min-h-[220px]"
+              style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+            />
+          )}
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {tags.map((t) => (
+                <span
+                  key={t}
+                  className="text-[10px] px-2 py-0.5 rounded-full"
+                  style={{ background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)' }}
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </>
+    )
+  }
+
+  const rows: Array<{ id: string; title: string; snippet: string; pinned?: boolean; updatedAt: number }> = hits
+    ? hits.map((h) => ({ id: h.id, title: h.title, snippet: h.snippet, updatedAt: h.updatedAt }))
+    : notes.map((n) => ({ id: n.id, title: n.title, snippet: n.body.replace(/\s+/g, ' ').slice(0, 140), pinned: n.pinned, updatedAt: n.updatedAt }))
+
+  return (
+    <>
+      <PanelHeader
+        title="Notes"
+        subtitle="Jot anything, capture from any reply."
+        onClose={onClose}
+        action={
+          <Button
+            variant="link"
+            onClick={() => void createNote()}
+            className="h-auto p-0 text-[11px]"
+            style={{ color: 'var(--text-accent)' }}
+          >
+            New note
+          </Button>
+        }
+      />
+      <div className="p-3" style={{ borderBottom: '0.5px solid var(--border)' }}>
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search notes…"
+          className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]"
+          style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--text-primary)' }}
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        {rows.map((r) => {
+          const note = notes.find((n) => n.id === r.id)
+          return (
+            <button
+              key={r.id}
+              onClick={() => note && openEditor(note)}
+              className="w-full text-left rounded-[12px] px-3 py-2 pressable hover:bg-[var(--bg-hover)]"
+              style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}
+            >
+              <div className="flex items-center gap-1.5">
+                {r.pinned ? <IonIcon name="pin-outline" size={11} style={{ color: 'var(--text-accent)' }} /> : null}
+                <span className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                  {r.title || 'Untitled note'}
+                </span>
+              </div>
+              {r.snippet ? (
+                <p className="text-[11px] mt-1 line-clamp-2" style={{ color: 'var(--text-tertiary)' }}>
+                  {r.snippet}
+                </p>
+              ) : null}
+            </button>
+          )
+        })}
+        {!rows.length && (
+          <p className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+            {query.trim() ? 'No notes match that.' : 'No notes yet. Highlight any reply to capture it.'}
+          </p>
+        )}
+      </div>
+    </>
+  )
+}
+
 export function HistoryPanel({
   history,
   onOpen,
@@ -1531,18 +2047,32 @@ export function ConnectorsPanel({
 export function SettingsPanel({
   settings,
   theme,
+  base,
   mode,
+  scale,
+  models,
+  model,
   onChange,
   onTheme,
+  onBase,
   onMode,
+  onScale,
+  onModel,
   onClose,
 }: {
   settings: AppSettings
   theme: ThemeName
+  base: BaseThemeName
   mode: Mode
+  scale: number
+  models: ModelOption[]
+  model: string
   onChange: (s: AppSettings) => void
   onTheme: (t: ThemeName) => void
+  onBase: (b: BaseThemeName) => void
   onMode: (m: Mode) => void
+  onScale: (n: number) => void
+  onModel: (id: string) => void
   onClose?: () => void
 }): React.JSX.Element {
   const setReview = async (autoReview: ReviewMode) => onChange(await api.updateSettings({ autoReview }))
@@ -1552,7 +2082,63 @@ export function SettingsPanel({
   return (
     <>
       <PanelHeader title="Settings" onClose={onClose} />
-      <div className="p-4 space-y-5 text-[12.5px]">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-5 text-[12.5px]">
+        {models.length > 0 && (
+          <div>
+            <div className="mb-2 font-medium">Model</div>
+            <Select value={model} onValueChange={onModel}>
+              <SelectTrigger
+                className="w-full h-auto rounded-[10px] px-2.5 py-2 text-[12.5px]"
+                style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+              >
+                <SelectValue placeholder="Select a model" />
+              </SelectTrigger>
+              <SelectContent>
+                {models.map((m) => (
+                  <SelectItem key={m.id || m.label} value={m.id}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
+              The model new runs use. Configure providers in OpenCode.
+            </p>
+          </div>
+        )}
+        <div>
+          <div className="mb-2 font-medium">Theme</div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {BASE_THEMES.map((b) => (
+              <button
+                key={b.name}
+                type="button"
+                onClick={() => onBase(b.name)}
+                aria-pressed={base === b.name}
+                className="flex items-center gap-2 rounded-[10px] px-2.5 py-2 text-left text-[12px] motion-rise"
+                style={{
+                  background: base === b.name ? 'var(--accent-soft)' : 'var(--bg-tertiary)',
+                  border: `0.5px solid ${base === b.name ? 'var(--accent)' : 'var(--border)'}`,
+                  color: base === b.name ? 'var(--text-primary)' : 'var(--text-secondary)',
+                }}
+              >
+                <span
+                  className="shrink-0 rounded-full"
+                  style={{
+                    width: 14,
+                    height: 14,
+                    background: `linear-gradient(135deg, ${b.swatch}, color-mix(in srgb, ${b.swatch} 55%, #000))`,
+                    border: '0.5px solid var(--border)',
+                  }}
+                />
+                <span className="truncate">{b.label}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
+            Surfaces, type and corner rounding. The accent below is independent.
+          </p>
+        </div>
         <div>
           <div className="mb-2 font-medium">Your name</div>
           <Input
@@ -1591,9 +2177,6 @@ export function SettingsPanel({
               </Button>
             ))}
           </div>
-          <p className="text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
-            Dark is the default. The accent swatches below tint whichever mode you pick.
-          </p>
         </div>
         <div>
           <div className="mb-2 font-medium">Accent</div>
@@ -1610,6 +2193,48 @@ export function SettingsPanel({
               />
             ))}
           </div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-medium">Font size</span>
+            <span className="text-[11px] tabular-nums" style={{ color: 'var(--text-tertiary)' }}>
+              {Math.round(scale * 100)}%
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              aria-label="Decrease font size"
+              disabled={scale <= SCALE_MIN}
+              onClick={() => onScale(scale - SCALE_STEP)}
+              className="h-8 rounded-lg px-2.5 text-[12px] leading-none disabled:opacity-40"
+              style={{ border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+            >
+              A−
+            </Button>
+            <Button
+              variant="outline"
+              aria-label="Increase font size"
+              disabled={scale >= SCALE_MAX}
+              onClick={() => onScale(scale + SCALE_STEP)}
+              className="h-8 rounded-lg px-2.5 text-[12px] leading-none disabled:opacity-40"
+              style={{ border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+            >
+              A+
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={scale === 1}
+              onClick={() => onScale(1)}
+              className="h-8 rounded-lg px-2.5 text-[11.5px] disabled:opacity-40"
+              style={{ color: 'var(--text-tertiary)' }}
+            >
+              Reset
+            </Button>
+          </div>
+          <p className="text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
+            Scales the whole interface.
+          </p>
         </div>
         <label className="flex items-center justify-between gap-3">
           <span className="flex-1">
@@ -2110,6 +2735,15 @@ export function MemoryIcon(): React.JSX.Element {
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M8 2.5 13.5 5.5v5L8 13.5 2.5 10.5v-5L8 2.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
       <path d="M2.6 5.6 8 8.5l5.4-2.9M8 8.5v5" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+export function NotesIcon(): React.JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M4 2.5h5.5L12.5 5.5V13a.5.5 0 0 1-.5.5H4a.5.5 0 0 1-.5-.5V3a.5.5 0 0 1 .5-.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M9.3 2.6v3h3M6 8.5h4M6 11h2.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

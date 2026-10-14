@@ -193,10 +193,66 @@ suite('database — stats', () => {
     const db = makeDb()
     db.messages.index({ id: 'm1', role: 'user', text: 'hello', botId: 'b', botName: 'B' })
     db.events.add({ type: 'app', name: 'ready' })
-    assert.deepEqual(db.stats(), { messages: 1, events: 1, profile: 0 })
+    assert.deepEqual(db.stats(), { messages: 1, events: 1, profile: 0, notes: 0 })
   })
 
   it('reports the database as available on this runtime', () => {
     assert.equal(makeDb().available, true)
+  })
+})
+
+// ── notes ───────────────────────────────────────────────────────────────────────
+
+suite('database — notes', () => {
+  it('creates, reads, and lists notes newest-first', () => {
+    const db = makeDb()
+    const first = db.notes.create({ title: 'Offsite', body: 'Book the venue', tags: ['work', 'work'] })
+    const second = db.notes.create({ title: 'Ideas', body: 'Ship notes' })
+    assert.equal(first.title, 'Offsite')
+    assert.deepEqual(first.tags, ['work'])
+    assert.equal(db.notes.get(first.id)?.body, 'Book the venue')
+    assert.deepEqual(
+      db.notes.list().map((n) => n.id),
+      [second.id, first.id],
+    )
+    assert.equal(db.notes.count(), 2)
+  })
+
+  it('floats pinned notes to the top regardless of recency', () => {
+    const db = makeDb()
+    const older = db.notes.create({ title: 'Old', body: 'x' })
+    const newer = db.notes.create({ title: 'New', body: 'y' })
+    db.notes.update(older.id, { pinned: true })
+    assert.equal(db.notes.list()[0].id, older.id)
+    assert.equal(db.notes.list()[1].id, newer.id)
+  })
+
+  it('updates fields and appends captured text with a blank line', () => {
+    const db = makeDb()
+    const note = db.notes.create({ title: 'Log', body: 'first' })
+    const updated = db.notes.update(note.id, { title: 'Log 2', tags: ['a'] })
+    assert.equal(updated?.title, 'Log 2')
+    const appended = db.notes.append(note.id, 'second')
+    assert.equal(appended?.body, 'first\n\nsecond')
+    assert.equal(db.notes.append('missing', 'x'), undefined)
+  })
+
+  it('deletes notes', () => {
+    const db = makeDb()
+    const note = db.notes.create({ title: 'Temp' })
+    assert.equal(db.notes.remove(note.id), true)
+    assert.equal(db.notes.get(note.id), undefined)
+    assert.equal(db.notes.remove('missing'), false)
+  })
+
+  it('searches title and body via FTS, and falls back to recents on an empty query', () => {
+    const db = makeDb()
+    db.notes.create({ title: 'Quarterly budget', body: 'spend on infra' })
+    db.notes.create({ title: 'Reading list', body: 'book wishlist' })
+    const hits = db.notes.search('budget')
+    assert.equal(hits.length, 1)
+    assert.equal(hits[0].title, 'Quarterly budget')
+    assert.match(hits[0].snippet, /budget/i)
+    assert.equal(db.notes.search('the a is of').length, 2)
   })
 })

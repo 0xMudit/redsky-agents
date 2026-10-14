@@ -22,6 +22,8 @@ export type {
   HistoryTurn,
   MemoryRow,
   ModelOption,
+  Note,
+  NoteHit,
   NoticeKind,
   PendingPermission,
   Recording,

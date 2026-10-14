@@ -4,7 +4,7 @@ import { autoUpdater } from 'electron-updater'
 import { createAgent, JOB_TEMPLATES, type AgentHandle } from './agent'
 import { audit } from './audit'
 import { createConnectorStore } from './connectors'
-import { createDatabase } from './database'
+import { createDatabase, type NoteInput, type NotePatch } from './database'
 import { createComputerStore } from './cloud/computer'
 import { createDeviceStore } from './cloud/devices'
 import { buildHandoffPrompt } from './collab'
@@ -22,6 +22,7 @@ import { startServer, serverEvents, stop as stopServer } from './server'
 import { createSettingsStore } from './settings'
 import { tools } from './tools'
 import { createVault } from './vault'
+import { importDroppedFiles } from './workspace'
 import { checkOpenCode, composeFeedbackUrl, redactedLogTail } from './beta'
 import { previewOf } from '../shared/visible'
 import type { ModelRef } from './http'
@@ -292,6 +293,7 @@ function wireIpc(): void {
       templates: JOB_TEMPLATES,
       connectors: connectors().list(),
       rooms: rooms().list(),
+      notes: db().notes.list(),
       notices: notices().list(),
       settings: settings().get(),
       runtime: 'opencode',
@@ -352,11 +354,18 @@ function wireIpc(): void {
 
   ipcMain.handle('rs:lifeTip', async () => requireAgent().lifeTip())
 
-  ipcMain.handle('rs:send', async (_e, botId: string, payload: { text: string; model?: string; roomId?: string }) => {
-    if (!payload?.text?.trim()) throw new Error('empty prompt')
+  ipcMain.handle('rs:send', async (_e, botId: string, payload: { text: string; model?: string; roomId?: string; attachments?: string[] }) => {
+    const attachments = (payload?.attachments ?? []).filter((p): p is string => typeof p === 'string' && p.length > 0)
+    const text = payload?.text?.trim() ?? ''
+    if (!text && attachments.length === 0) throw new Error('empty prompt')
     if (!baseUrl) throw new Error('OpenCode is still starting')
-    recordEvent('prompt', 'send', { botId, props: { length: payload.text.length, roomId: payload.roomId } })
-    return requireAgent().send(botId, { text: payload.text, model: parseModel(payload.model), roomId: payload.roomId })
+    // Attachments were copied into workspace/inbox by rs:importFiles; hand the agent
+    // their workspace-relative paths so it can read them like any other workspace file.
+    const prompt = attachments.length
+      ? `${text || 'Review the attached file(s).'}\n\nAttached files (workspace-relative paths — read them as needed):\n${attachments.map((p) => `- ${p}`).join('\n')}`
+      : text
+    recordEvent('prompt', 'send', { botId, props: { length: prompt.length, roomId: payload.roomId, attachments: attachments.length } })
+    return requireAgent().send(botId, { text: prompt, model: parseModel(payload.model), roomId: payload.roomId })
   })
 
   ipcMain.handle('rs:abortBot', async (_e, botId: string) => {
@@ -427,6 +436,11 @@ function wireIpc(): void {
     // Must include path.sep suffix to prevent workspace-evil/ bypassing startsWith().
     if (abs !== wsDir() && !abs.startsWith(wsDir() + path.sep)) throw new Error('path escapes workspace')
     return readFileSync(abs, 'utf8')
+  })
+
+  ipcMain.handle('rs:importFiles', async (_e, files: { name: string; data: Uint8Array }[]) => {
+    if (!Array.isArray(files) || files.length === 0) return []
+    return importDroppedFiles(files)
   })
 
   ipcMain.handle('rs:listMemories', async (_e, botId?: string) => requireAgent().memory.list(botId))
@@ -508,6 +522,41 @@ function wireIpc(): void {
   ipcMain.handle('rs:deleteRoom', async (_e, roomId: string) => {
     rooms().delete(roomId)
     broadcast({ source: 'rooms', rooms: rooms().list() })
+    return { ok: true }
+  })
+
+  // Notes — Notion-style, stored in chat.db with an FTS5 index. Every mutation
+  // broadcasts the full list so open panels reconcile against one source.
+  ipcMain.handle('rs:listNotes', async (_e, opts?: { limit?: number }) => db().notes.list(opts))
+  ipcMain.handle('rs:searchNotes', async (_e, query: string, opts?: { limit?: number }) => {
+    const q = query?.trim()
+    if (!q) return []
+    return db().notes.search(q, opts)
+  })
+  ipcMain.handle('rs:getNote', async (_e, id: string) => db().notes.get(id))
+  ipcMain.handle('rs:createNote', async (_e, payload?: NoteInput) => {
+    const note = db().notes.create(payload ?? {})
+    const notes = db().notes.list()
+    broadcast({ source: 'notes', notes })
+    recordEvent('notes', 'create', { props: { id: note.id } })
+    return note
+  })
+  ipcMain.handle('rs:updateNote', async (_e, id: string, patch?: NotePatch) => {
+    const note = db().notes.update(id, patch ?? {})
+    if (!note) throw new Error('note not found')
+    broadcast({ source: 'notes', notes: db().notes.list() })
+    return note
+  })
+  ipcMain.handle('rs:appendToNote', async (_e, id: string, text: string) => {
+    if (!text?.trim()) throw new Error('nothing to add to the note')
+    const note = db().notes.append(id, text.trim())
+    if (!note) throw new Error('note not found')
+    broadcast({ source: 'notes', notes: db().notes.list() })
+    return note
+  })
+  ipcMain.handle('rs:deleteNote', async (_e, id: string) => {
+    db().notes.remove(id)
+    broadcast({ source: 'notes', notes: db().notes.list() })
     return { ok: true }
   })
 

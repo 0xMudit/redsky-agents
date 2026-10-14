@@ -245,7 +245,8 @@ More in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) and the [issue tracker](https
 - Broader test coverage. The harness covers the JSON stores, the agent/OpenCode layer (against a fake
   `/session` + `/event` server), the workspace helpers, the shell sandbox, and the scheduler; UI-level
   (component) tests and the live IPC boundary are still open.
-- Drag-and-drop file import into the workspace (`importDroppedFiles` exists with no UI), and a DevTools toggle
+- Window-level drag-and-drop of files onto the app (the composer's attach button already copies files into
+  `workspace/inbox` via `rs:importFiles`), and a DevTools toggle
   for the frameless window. See [Known limitations](docs/ARCHITECTURE.md#known-limitations).
 - Cloud capabilities — persistent per-bot computers, a 24/7 hosted runtime, mobile clients, teach-by-showing,
   cross-bot knowledge, and a durable handoff queue — are scaffolded and typed end to end. See

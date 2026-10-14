@@ -199,9 +199,10 @@ These are honest gaps, tracked on the [roadmap](../README.md#roadmap):
   OAuth or API integration behind it yet.
 - **Browser automation is a stub.** `electron/browser.ts` describes the intended Playwright persistent-context
   design but does not launch anything.
-- **Some main-process helpers are still unwired.** `importDroppedFiles` (drag-and-drop into the workspace)
-  has no IPC channel or UI, and `createBrowserHandle` in `electron/browser.ts` is a stub that launches
-  nothing. Wiring either up is a self-contained first contribution.
+- **Browser automation is still a stub.** `createBrowserHandle` in `electron/browser.ts` describes the
+  intended Playwright persistent-context design but launches nothing; wiring it up is a self-contained first
+  contribution. (`importDroppedFiles` is wired — the composer attaches files through `rs:importFiles` into
+  `workspace/inbox`.)
 - **Schedules are in-process.** Timers live in the main process, so routines only fire while the app is
   running, and a missed window is not replayed.
 - **Single window, single user.** No multi-window support and no per-user permissions on the workspace.

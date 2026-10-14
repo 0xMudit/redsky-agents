@@ -3,7 +3,7 @@ import { newId } from './lib/ids'
 import { openDatabase, migrate, isSqliteAvailable, type SqliteDatabase } from './lib/sqlite'
 import { userDataDir } from './paths'
 import { safeTime, tokenize } from './vault'
-import type { MemoryRow } from '../shared/types'
+import type { MemoryRow, Note, NoteHit } from '../shared/types'
 
 /**
  * Red Sky's local database (`chat.db`): one SQLite file in `userData` holding the
@@ -64,6 +64,24 @@ export interface SearchOptions {
   user?: string
 }
 
+export interface NoteInput {
+  id?: string
+  title?: string
+  body?: string
+  tags?: string[]
+  pinned?: boolean
+  source?: string
+  botId?: string
+  at?: number
+}
+
+export interface NotePatch {
+  title?: string
+  body?: string
+  tags?: string[]
+  pinned?: boolean
+}
+
 export interface Database {
   readonly file: string
   readonly available: boolean
@@ -89,7 +107,17 @@ export interface Database {
     list: (opts?: { limit?: number; type?: string; botId?: string }) => EventRow[]
     count: () => number
   }
-  stats: () => { messages: number; events: number; profile: number }
+  notes: {
+    create: (input: NoteInput) => Note
+    get: (id: string) => Note | undefined
+    list: (opts?: { limit?: number }) => Note[]
+    update: (id: string, patch: NotePatch) => Note | undefined
+    append: (id: string, text: string) => Note | undefined
+    remove: (id: string) => boolean
+    search: (query: string, opts?: { limit?: number }) => NoteHit[]
+    count: () => number
+  }
+  stats: () => { messages: number; events: number; profile: number; notes: number }
 }
 
 /** Turn a free-text query into a safe FTS5 MATCH expression: prefix-ANDed terms. */
@@ -125,6 +153,13 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
   function conn(): SqliteDatabase | null {
     if (!ready) init()
     return db
+  }
+
+  function readNote(id: string): Note | undefined {
+    const d = conn()
+    if (!d) return undefined
+    const row = d.prepare('SELECT * FROM notes WHERE id = ?').get(id) as Record<string, unknown> | undefined
+    return row ? noteFromRow(row) : undefined
   }
 
   return {
@@ -378,13 +413,126 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
       },
     },
 
+    notes: {
+      create(input) {
+        const d = conn()
+        const now = Date.now()
+        const note: Note = {
+          id: input.id ?? newId('note'),
+          title: (input.title ?? '').trim(),
+          body: input.body ?? '',
+          tags: normalizeTags(input.tags),
+          pinned: Boolean(input.pinned),
+          source: asText(input.source),
+          botId: asText(input.botId),
+          createdAt: input.at ?? now,
+          updatedAt: now,
+        }
+        if (!d) return note
+        d.prepare(
+          `INSERT INTO notes(id, title, body, tags, pinned, source, bot_id, at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          note.id,
+          note.title,
+          note.body,
+          JSON.stringify(note.tags),
+          note.pinned ? 1 : 0,
+          note.source ?? null,
+          note.botId ?? null,
+          note.createdAt,
+          note.updatedAt,
+        )
+        return note
+      },
+      get(id) {
+        return readNote(id)
+      },
+      list({ limit = 200 } = {}) {
+        const d = conn()
+        if (!d) return []
+        const rows = d
+          .prepare('SELECT * FROM notes ORDER BY pinned DESC, updated_at DESC LIMIT ?')
+          .all(Math.min(1000, Math.max(1, limit)))
+        return (rows as Array<Record<string, unknown>>).map(noteFromRow)
+      },
+      update(id, patch) {
+        const d = conn()
+        if (!d) return undefined
+        const current = readNote(id)
+        if (!current) return undefined
+        const next: Note = {
+          ...current,
+          title: patch.title !== undefined ? patch.title.trim() : current.title,
+          body: patch.body !== undefined ? patch.body : current.body,
+          tags: patch.tags !== undefined ? normalizeTags(patch.tags) : current.tags,
+          pinned: patch.pinned !== undefined ? Boolean(patch.pinned) : current.pinned,
+          updatedAt: Date.now(),
+        }
+        d.prepare('UPDATE notes SET title = ?, body = ?, tags = ?, pinned = ?, updated_at = ? WHERE id = ?').run(
+          next.title,
+          next.body,
+          JSON.stringify(next.tags),
+          next.pinned ? 1 : 0,
+          next.updatedAt,
+          id,
+        )
+        return next
+      },
+      append(id, text) {
+        const current = readNote(id)
+        if (!current) return undefined
+        const body = current.body.trim() ? `${current.body.replace(/\s+$/, '')}\n\n${text}` : text
+        const d = conn()
+        if (!d) return undefined
+        const next: Note = { ...current, body, updatedAt: Date.now() }
+        d.prepare('UPDATE notes SET body = ?, updated_at = ? WHERE id = ?').run(next.body, next.updatedAt, id)
+        return next
+      },
+      remove(id) {
+        const d = conn()
+        if (!d) return false
+        const info = d.prepare('DELETE FROM notes WHERE id = ?').run(id)
+        return Number(info.changes ?? 0) > 0
+      },
+      search(query, { limit = 30 } = {}) {
+        const d = conn()
+        if (!d) return []
+        const cap = Math.min(200, Math.max(1, limit))
+        const match = toMatchQuery(query)
+        const rows = match
+          ? d
+              .prepare(
+                `SELECT n.id, n.title, n.tags, n.updated_at,
+                        snippet(notes_fts, -1, '[', ']', ' … ', 12) AS snippet,
+                        bm25(notes_fts) AS score
+                 FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid
+                 WHERE notes_fts MATCH ? ORDER BY score LIMIT ?`,
+              )
+              .all(match, cap)
+          : d
+              .prepare(
+                `SELECT id, title, tags, updated_at, body AS snippet, 0 AS score
+                 FROM notes ORDER BY updated_at DESC LIMIT ?`,
+              )
+              .all(cap)
+        return (rows as Array<Record<string, unknown>>).map(noteHitFromRow)
+      },
+      count() {
+        const d = conn()
+        if (!d) return 0
+        return Number((d.prepare('SELECT COUNT(*) AS n FROM notes').get() as { n: number }).n)
+      },
+    },
+
     stats() {
       const d = conn()
-      if (!d) return { messages: 0, events: 0, profile: 0 }
+      if (!d) return { messages: 0, events: 0, profile: 0, notes: 0 }
       return {
         messages: Number((d.prepare('SELECT COUNT(*) AS n FROM messages').get() as { n: number }).n),
         events: Number((d.prepare('SELECT COUNT(*) AS n FROM events').get() as { n: number }).n),
         profile: Number((d.prepare('SELECT COUNT(*) AS n FROM user_profile').get() as { n: number }).n),
+        notes: Number((d.prepare('SELECT COUNT(*) AS n FROM notes').get() as { n: number }).n),
       }
     },
   }
@@ -408,6 +556,42 @@ function hitFromRow(row: Record<string, unknown>): MessageHit {
     botName: String(row.bot_name),
     user: asText(row.user),
     snippet: String(row.snippet ?? row.text),
+    score: Number(row.score ?? 0),
+  }
+}
+
+function normalizeTags(tags: string[] | undefined): string[] {
+  if (!Array.isArray(tags)) return []
+  return [...new Set(tags.map((t) => String(t).trim()).filter(Boolean))].slice(0, 24)
+}
+
+function parseTags(value: unknown): string[] {
+  if (typeof value !== 'string' || !value) return []
+  const parsed = safeParse(value)
+  return Array.isArray(parsed) ? parsed.map(String) : []
+}
+
+function noteFromRow(row: Record<string, unknown>): Note {
+  return {
+    id: String(row.id),
+    title: String(row.title ?? ''),
+    body: String(row.body ?? ''),
+    tags: parseTags(row.tags),
+    pinned: Number(row.pinned) === 1,
+    source: asText(row.source),
+    botId: asText(row.bot_id),
+    createdAt: Number(row.at),
+    updatedAt: Number(row.updated_at),
+  }
+}
+
+function noteHitFromRow(row: Record<string, unknown>): NoteHit {
+  return {
+    id: String(row.id),
+    title: String(row.title ?? 'Untitled note'),
+    snippet: String(row.snippet ?? ''),
+    tags: parseTags(row.tags),
+    updatedAt: Number(row.updated_at),
     score: Number(row.score ?? 0),
   }
 }

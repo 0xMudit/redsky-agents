@@ -1,11 +1,15 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Base themes (tweakcn) — full shadcn surface tokens per data-base, generated.
+   Placed before the app's own :root/accent rules so those can override. */
+@import "./themes.css";
 
 /*
-  Red Sky UI — shadcn/ui on Tailwind v4, themed with tweakcn's "Notebook"
-  (paper + ink, handwritten sans, ruled borders). shadcn tokens are the source
-  of truth; the app's original token names are bridged onto them below so every
-  existing component keeps working unchanged.
+  Red Sky UI — shadcn/ui on Tailwind v4. Two independent appearance axes:
+    · data-base  → base theme (full surface/type/radius set) in themes.css
+    · data-theme → brand accent colour (below)
+  shadcn tokens are the source of truth; the app's original token names are
+  bridged onto them so every existing component keeps working unchanged.
 */
 @custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
 
@@ -53,7 +57,9 @@
   --font-serif: Georgia, "Times New Roman", serif;
 }
 
-/* ── Base (light) — tweakcn "Notebook" light tokens + legacy bridge ── */
+/* ── Fallback light tokens (no data-base) — mirrors Notebook; the default base
+   is Supabase, set on <html> by the inline script and themes.css. Also hosts
+   the mode-independent brand accent and the legacy bridge. ── */
 :root {
   color-scheme: light;
   --radius: 0.625rem;
@@ -162,7 +168,7 @@
   --code-ink: oklch(0.93 0 0);
 }
 
-/* ── Dark mode — tweakcn "Notebook" dark tokens ─────────── */
+/* ── Fallback dark tokens (no data-base) — mirrors Notebook dark ─────────── */
 :root[data-mode="dark"] {
   color-scheme: dark;
 
@@ -1051,6 +1057,10 @@ button {
 }
 .cmdk-label { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdk-hint { margin-left: auto; font-size: 10.5px; color: var(--text-tertiary); flex-shrink: 0; }
+.cmdk-item.sub { align-items: flex-start; }
+.cmdk-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.cmdk-col .cmdk-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdk-sub { font-size: 11px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdk-empty { padding: 26px 14px; text-align: center; font-size: 12.5px; color: var(--text-tertiary); }
 .cmdk-foot {
   display: flex; gap: 14px; flex-wrap: wrap;
