@@ -1,5 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { addIcons } from 'ionicons'
+import { defineCustomElement } from 'ionicons/components/ion-icon.js'
+import {
+  addOutline,
+  calendarOutline,
+  chevronDownOutline,
+  chevronUpOutline,
+  gitNetworkOutline,
+  libraryOutline,
+  peopleOutline,
+  searchOutline,
+  settingsOutline,
+  timeOutline,
+} from 'ionicons/icons'
 import { api } from './api'
+import { confirmDialog } from '@/components/ui/confirm'
 import { dateLabel, renderMarkdown, timeLabel } from './format'
 import type {
   AppSettings,
@@ -16,12 +31,49 @@ import type {
   Routine,
 } from './types'
 
+declare module 'react' {
+  namespace JSX {
+    interface IntrinsicElements {
+      'ion-icon': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
+        name?: string
+        size?: string
+      }
+    }
+  }
+}
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  ContextMenu as RadixContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
+
 /* ── Themes ────────────────────────────────────────────────── */
 
 export type ThemeName = 'coral' | 'aurora' | 'emerald' | 'amber' | 'rose' | 'ice' | 'mainline'
 
 export const THEMES: { name: ThemeName; label: string; swatch: string }[] = [
-  { name: 'mainline', label: 'Mainline', swatch: '#6f7885' },
+  { name: 'mainline', label: 'Mainline', swatch: '#79828f' },
   { name: 'coral', label: 'Coral', swatch: '#f4513f' },
   { name: 'aurora', label: 'Aurora', swatch: '#7c6aff' },
   { name: 'emerald', label: 'Emerald', swatch: '#2fbf8f' },
@@ -101,6 +153,43 @@ export function ChevronUpIcon(): React.JSX.Element {
   )
 }
 
+/* ── Ionicons ───────────────────────────────────────────────── */
+
+let ioniconsRegistered = false
+
+function registerIonicons(): void {
+  if (ioniconsRegistered) return
+  ioniconsRegistered = true
+  defineCustomElement()
+  addIcons({
+    addOutline,
+    searchOutline,
+    peopleOutline,
+    calendarOutline,
+    libraryOutline,
+    timeOutline,
+    gitNetworkOutline,
+    settingsOutline,
+    chevronDownOutline,
+    chevronUpOutline,
+  })
+}
+
+export function IonIcon({
+  name,
+  size = 18,
+  className,
+  style,
+}: {
+  name: string
+  size?: number
+  className?: string
+  style?: React.CSSProperties
+}): React.JSX.Element {
+  registerIonicons()
+  return <ion-icon name={name} className={className} aria-hidden="true" style={{ fontSize: `${size}px`, ...style }} />
+}
+
 /* ── Brand ─────────────────────────────────────────────────── */
 
 export function Logo({ size = 26 }: { size?: number }): React.JSX.Element {
@@ -161,17 +250,20 @@ export function IconBtn({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="icon"
       title={title}
+      aria-label={title}
       onClick={onClick}
-      className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-[var(--bg-hover)] pressable"
+      className={cn('w-7 h-7 rounded-lg pressable', active && 'bg-[var(--bg-active)]')}
       style={{
         background: active ? 'var(--bg-active)' : 'transparent',
         color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
       }}
     >
       {children}
-    </button>
+    </Button>
   )
 }
 
@@ -192,7 +284,7 @@ export function NavItem({
     <button
       onClick={onClick}
       data-active={active}
-      className="nav-item w-full text-left rounded-[10px] px-2.5 py-2 flex items-center gap-2.5 hover:bg-[var(--sidebar-hover)] pressable"
+      className="nav-item w-full text-left rounded-[10px] px-2.5 py-1.5 mb-0.5 flex items-center gap-2.5 hover:bg-[var(--sidebar-hover)] pressable"
       style={{ background: active ? 'var(--sidebar-selected)' : 'transparent', color: active ? 'var(--text-primary)' : 'var(--sidebar-muted)' }}
     >
       <span className="shrink-0 flex items-center justify-center w-4" style={{ color: active ? 'var(--accent)' : 'inherit' }}>
@@ -235,9 +327,9 @@ export function PanelHeader({
       <div className="flex items-center gap-2 shrink-0">
         {action}
         {onClose ? (
-          <button onClick={onClose} title="Collapse panel" className="w-6 h-6 rounded-md flex items-center justify-center hover:bg-[var(--bg-hover)]" style={{ color: 'var(--text-tertiary)' }}>
+          <Button variant="ghost" size="icon" onClick={onClose} title="Collapse panel" aria-label="Collapse panel" className="w-6 h-6 rounded-md" style={{ color: 'var(--text-tertiary)' }}>
             <PanelIcon />
-          </button>
+          </Button>
         ) : null}
       </div>
     </div>
@@ -465,19 +557,19 @@ export function MessageBlock({
       <div className={`flex ${role === 'user' ? 'justify-end' : 'gap-2.5 items-start'}`}>
         {role !== 'user' && <BlobAvatar hue={hue} size={28} />}
         <div className="max-w-[82%] w-full">
-          <textarea
+          <Textarea
             value={draft ?? text}
             onChange={(e) => onDraft?.(e.target.value)}
-            className="w-full rounded-2xl px-3.5 py-2.5 text-[14px] leading-5 outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1 resize-y min-h-[72px]"
+            className="w-full rounded-2xl px-3.5 py-2.5 text-[14px] leading-5 resize-y min-h-[72px]"
             style={{ background: 'var(--raised)', border: '0.5px solid var(--border)', color: 'var(--text-primary)' }}
           />
           <div className="flex gap-2 mt-1.5">
-            <button onClick={onSave} className="text-[12px] rounded-full px-3 py-1" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+            <Button size="sm" onClick={onSave} className="h-auto text-[12px] rounded-full px-3 py-1" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
               Save
-            </button>
-            <button onClick={onCancel} className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
+            </Button>
+            <Button variant="ghost" size="sm" onClick={onCancel} className="h-auto text-[12px] rounded-full px-2 py-1" style={{ color: 'var(--text-tertiary)' }}>
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -684,9 +776,15 @@ export function RunResultCard({
             </span>
           ))}
         </div>
-        <button onClick={onOpenActivity} className="ml-auto text-[10.5px] hover:underline" style={{ color: 'var(--text-accent)' }}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onOpenActivity}
+          className="ml-auto h-auto text-[10.5px] px-0 border-0 hover:underline hover:bg-transparent"
+          style={{ color: 'var(--text-accent)' }}
+        >
           View activity
-        </button>
+        </Button>
       </div>
       {hasDiff ? (
         <>
@@ -702,16 +800,18 @@ export function RunResultCard({
           </div>
           <div className="flex flex-wrap gap-1.5">
             {artifacts.map((a) => (
-              <button
+              <Button
                 key={a.path}
+                variant="outline"
+                size="sm"
                 onClick={() => onOpenFile(a.path)}
-                className="text-[11.5px] rounded-lg px-2 py-1 hover:bg-[var(--bg-hover)] flex items-center gap-1.5"
+                className="h-auto text-[11.5px] rounded-lg px-2 py-1 gap-1.5"
                 style={{ border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
                 title={a.path}
               >
                 <FileIcon />
                 {a.title}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -731,9 +831,10 @@ export function ActivitySummary({
   if (!n) return null
   const changed = bot.runDiff ? bot.runDiff.added.length + bot.runDiff.changed.length + bot.runDiff.removed.length : 0
   return (
-    <button
+    <Button
+      variant="outline"
       onClick={onOpen}
-      className="self-start flex items-center gap-2 rounded-xl px-3 py-2 hover:bg-[var(--bg-hover)] activity-in pressable"
+      className="self-start h-auto flex items-center gap-2 rounded-xl px-3 py-2 activity-in pressable justify-start"
       style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
     >
       <span style={{ color: 'var(--text-accent)' }}>
@@ -746,7 +847,7 @@ export function ActivitySummary({
       <span className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
         View activity
       </span>
-    </button>
+    </Button>
   )
 }
 
@@ -775,15 +876,15 @@ export function ApprovalCard({
         {p.detail}
       </p>
       <div className="flex gap-2 mt-3">
-        <button onClick={() => onRespond('once')} className="text-[13px] font-medium rounded-full px-3 py-1.5" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+        <Button onClick={() => onRespond('once')} className="h-auto text-[13px] font-medium rounded-full px-3 py-1.5" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
           Allow once
-        </button>
-        <button onClick={() => onRespond('always')} className="text-[13px] rounded-full px-3 py-1.5" style={{ background: 'var(--fill-secondary)' }}>
+        </Button>
+        <Button variant="secondary" onClick={() => onRespond('always')} className="h-auto text-[13px] rounded-full px-3 py-1.5" style={{ background: 'var(--fill-secondary)' }}>
           Always
-        </button>
-        <button onClick={() => onRespond('reject')} className="text-[13px] px-3 py-1.5" style={{ color: 'var(--text-danger)' }}>
+        </Button>
+        <Button variant="ghost" onClick={() => onRespond('reject')} className="h-auto text-[13px] rounded-full px-3 py-1.5" style={{ color: 'var(--text-danger)' }}>
           Reject
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -819,9 +920,9 @@ export function ActivityPanel({
         subtitle={bot?.activity ? bot.activity : 'Live timeline of what this agent is doing.'}
         onClose={onCollapse}
         action={
-          <button onClick={onOpenWorkspace} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
+          <Button variant="link" onClick={onOpenWorkspace} className="h-auto p-0 text-[11px]" style={{ color: 'var(--text-accent)' }}>
             Open folder
-          </button>
+          </Button>
         }
       />
       <div className="flex-1 overflow-y-auto p-3 space-y-4">
@@ -899,14 +1000,15 @@ export function ActivityPanel({
           {files.length ? (
             <div className="space-y-0.5">
               {files.map((f) => (
-                <button
+                <Button
                   key={f.path}
+                  variant="ghost"
                   onClick={() => onOpenFile(f.path)}
-                  className="block w-full text-left text-[12px] py-1 px-1.5 rounded-md hover:bg-[var(--bg-hover)] hover:text-white truncate"
+                  className="block w-full h-auto justify-start text-left text-[12px] py-1 px-1.5 rounded-md truncate"
                   style={{ color: 'var(--text-secondary)' }}
                 >
                   {f.name || f.path}
-                </button>
+                </Button>
               ))}
             </div>
           ) : (
@@ -921,7 +1023,7 @@ export function ActivityPanel({
             <div className="flex items-center justify-between mb-2">
               <SectionLabel>{fileView.path}</SectionLabel>
             </div>
-            <pre className="text-[11px] whitespace-pre-wrap rounded-[10px] p-2.5 max-h-72 overflow-auto" style={{ background: 'var(--code-fill)', color: 'var(--text-secondary)', fontFamily: 'var(--mono)', border: '0.5px solid var(--border)' }}>
+            <pre className="text-[11px] whitespace-pre-wrap rounded-[10px] p-2.5 max-h-72 overflow-auto" style={{ background: 'var(--code-fill)', color: 'var(--code-ink)', fontFamily: 'var(--mono)', border: '0.5px solid var(--border)' }}>
               {fileView.content}
             </pre>
           </section>
@@ -975,32 +1077,33 @@ export function RoomsPanel({
     <>
       <PanelHeader title="Rooms" subtitle="Bring agents together in a shared thread." onClose={onClose} />
       <div className="p-3 grid gap-2" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <input
+        <Input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="Room name"
-          className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1"
+          className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]"
           style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}
         />
         <div className="flex flex-wrap gap-1.5">
           {bots.map((b) => {
             const on = picked.includes(b.id)
             return (
-              <button
+              <Button
                 key={b.id}
+                variant="outline"
                 onClick={() => toggle(b.id)}
-                className="flex items-center gap-1.5 rounded-full pl-1 pr-2.5 py-1 text-[11.5px]"
+                className="h-auto flex items-center gap-1.5 rounded-full pl-1 pr-2.5 py-1 text-[11.5px]"
                 style={{ background: on ? 'var(--accent-soft)' : 'var(--bg-card)', border: `0.5px solid ${on ? 'var(--accent)' : 'var(--border)'}`, color: on ? 'var(--text-primary)' : 'var(--text-secondary)' }}
               >
                 <BlobAvatar hue={b.hue} size={18} />
                 {b.name}
-              </button>
+              </Button>
             )
           })}
         </div>
-        <button onClick={() => void create()} disabled={!picked.length} className="rounded-[10px] py-2 text-[12px] font-medium disabled:opacity-40" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+        <Button onClick={() => void create()} disabled={!picked.length} className="h-auto rounded-[10px] py-2 text-[12px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
           Create room
-        </button>
+        </Button>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {rooms.map((r) => {
@@ -1011,7 +1114,7 @@ export function RoomsPanel({
               <div className="flex items-center gap-2">
                 {editingId === r.id ? (
                   <>
-                    <input
+                    <Input
                       value={draftTitle}
                       autoFocus
                       onChange={(e) => setDraftTitle(e.target.value)}
@@ -1019,38 +1122,46 @@ export function RoomsPanel({
                         if (e.key === 'Enter') void saveRename(r.id)
                         if (e.key === 'Escape') setEditingId(null)
                       }}
-                      className="flex-1 rounded-md px-2 py-1 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1"
+                      className="flex-1 h-auto rounded-md px-2 py-1 text-[12px]"
                       style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}
                     />
-                    <button onClick={() => void saveRename(r.id)} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
+                    <Button variant="link" onClick={() => void saveRename(r.id)} className="h-auto p-0 text-[11px]" style={{ color: 'var(--text-accent)' }}>
                       Save
-                    </button>
+                    </Button>
                   </>
                 ) : (
                   <>
                     <span className="text-[12.5px] font-medium flex-1 truncate">{r.title}</span>
-                    <button
+                    <Button
+                      variant="link"
                       onClick={() => {
                         setEditingId(r.id)
                         setDraftTitle(r.title)
                       }}
-                      className="text-[10.5px]"
+                      className="h-auto p-0 text-[10.5px]"
                       style={{ color: 'var(--text-tertiary)' }}
                     >
                       rename
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                      variant="link"
                       onClick={async () => {
-                        if (confirm(`Delete room “${r.title}”?`)) {
+                        const ok = await confirmDialog({
+                          title: `Delete room “${r.title}”?`,
+                          body: 'The agents stay — only the room is removed.',
+                          confirmLabel: 'Delete',
+                          danger: true,
+                        })
+                        if (ok) {
                           await api.deleteRoom(r.id)
                           await refresh()
                         }
                       }}
-                      className="text-[10.5px]"
+                      className="h-auto p-0 text-[10.5px]"
                       style={{ color: 'var(--text-danger)' }}
                     >
                       delete
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
@@ -1073,20 +1184,20 @@ export function RoomsPanel({
               ) : null}
               {addable.length ? (
                 <div className="flex items-center gap-2 mt-2">
-                  <select
-                    value={addMap[r.id] ?? ''}
-                    onChange={(e) => setAddMap((m) => ({ ...m, [r.id]: e.target.value }))}
-                    className="flex-1 rounded-md px-1.5 py-1 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1"
-                    style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
-                  >
-                    <option value="">Add agent…</option>
-                    {addable.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
+                  <Select value={addMap[r.id] ?? ''} onValueChange={(v) => setAddMap((m) => ({ ...m, [r.id]: v }))}>
+                    <SelectTrigger size="sm" className="flex-1 h-auto rounded-md px-1.5 py-1 text-[11px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}>
+                      <SelectValue placeholder="Add agent…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {addable.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    variant="link"
                     onClick={async () => {
                       const id = addMap[r.id]
                       if (!id) return
@@ -1095,11 +1206,11 @@ export function RoomsPanel({
                       await refresh()
                     }}
                     disabled={!addMap[r.id]}
-                    className="text-[11px] disabled:opacity-40"
+                    className="h-auto p-0 text-[11px]"
                     style={{ color: 'var(--text-accent)' }}
                   >
                     Add
-                  </button>
+                  </Button>
                 </div>
               ) : null}
             </div>
@@ -1142,24 +1253,25 @@ export function MemoryPanel({
         subtitle="Facts agents carry between runs."
         onClose={onClose}
         action={
-          <button
+          <Button
+            variant="link"
             onClick={async () => {
               await api.clearMemories()
               onChange([])
             }}
-            className="text-[11px]"
+            className="h-auto p-0 text-[11px]"
             style={{ color: 'var(--text-danger)' }}
           >
             Clear
-          </button>
+          </Button>
         }
       />
       <div className="p-3 grid gap-2" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="key" className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="what to remember" className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <button onClick={() => void add()} disabled={!key.trim() || !value.trim()} className="rounded-[10px] py-2 text-[12px] font-medium disabled:opacity-40" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+        <Input value={key} onChange={(e) => setKey(e.target.value)} placeholder="key" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="what to remember" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <Button onClick={() => void add()} disabled={!key.trim() || !value.trim()} className="h-auto rounded-[10px] py-2 text-[12px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
           Remember
-        </button>
+        </Button>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {memories.map((m) => (
@@ -1168,16 +1280,17 @@ export function MemoryPanel({
               <span className="text-[12px] font-medium" style={{ color: 'var(--text-accent)' }}>
                 {m.key}
               </span>
-              <button
+              <Button
+                variant="link"
                 onClick={async () => {
                   await api.deleteMemory(m.id)
                   onChange(await api.listMemories(botId))
                 }}
-                className="text-[10px]"
+                className="h-auto p-0 text-[10px]"
                 style={{ color: 'var(--text-tertiary)' }}
               >
                 remove
-              </button>
+              </Button>
             </div>
             <p className="text-[12px] mt-1" style={{ color: 'var(--text-secondary)' }}>
               {m.value}
@@ -1229,9 +1342,9 @@ export function HistoryPanel({
               <span className="text-[12px] font-medium" style={{ color: 'var(--text-accent)' }}>
                 {turns[0]?.botName}
               </span>
-              <button onClick={() => onOpen(botId)} className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
+              <Button variant="link" onClick={() => onOpen(botId)} className="h-auto p-0 text-[11px]" style={{ color: 'var(--text-tertiary)' }}>
                 open
-              </button>
+              </Button>
             </div>
             {turns.slice(-8).map((t) => (
               <div key={t.id} className="py-1.5 border-b last:border-0" style={{ borderColor: 'var(--border)' }}>
@@ -1299,14 +1412,14 @@ export function RoutinePanel({
     <>
       <PanelHeader title="Schedules" subtitle="Teach a finished task, or schedule with `every 30 m`, `every 2 h`, or `09:00`." onClose={onClose} />
       <div className="p-3 grid gap-2" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <input value={schedule} onChange={(e) => setSchedule(e.target.value)} className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="what to run" className="rounded-[10px] px-2.5 py-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <button onClick={() => void add()} disabled={!prompt.trim() || !botId} className="rounded-[10px] py-2 text-[12px] font-medium disabled:opacity-40" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+        <Input value={schedule} onChange={(e) => setSchedule(e.target.value)} className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <Input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="what to run" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <Button onClick={() => void add()} disabled={!prompt.trim() || !botId} className="h-auto rounded-[10px] py-2 text-[12px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
           Schedule
-        </button>
-        <button onClick={() => void teach()} disabled={!botId} className="rounded-[10px] py-2 text-[12px]" style={{ color: 'var(--text-accent)', background: 'var(--bg-card)' }}>
+        </Button>
+        <Button variant="outline" onClick={() => void teach()} disabled={!botId} className="h-auto rounded-[10px] py-2 text-[12px]" style={{ color: 'var(--text-accent)', background: 'var(--bg-card)' }}>
           Teach last task
-        </button>
+        </Button>
       </div>
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {routines.map((r) => {
@@ -1324,26 +1437,28 @@ export function RoutinePanel({
                 {r.prompt}
               </p>
               <div className="flex gap-2 mt-2">
-                <button
+                <Button
+                  variant="link"
                   onClick={async () => {
                     await api.toggleRoutine(r.id, !r.enabled)
                     onChange(await api.listRoutines())
                   }}
-                  className="text-[10px]"
+                  className="h-auto p-0 text-[10px]"
                   style={{ color: r.enabled ? 'var(--text-warning)' : 'var(--text-accent)' }}
                 >
                   {r.enabled ? 'Disable' : 'Enable'}
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="link"
                   onClick={async () => {
                     await api.removeRoutine(r.id)
                     onChange(await api.listRoutines())
                   }}
-                  className="text-[10px]"
+                  className="h-auto p-0 text-[10px]"
                   style={{ color: 'var(--text-danger)' }}
                 >
                   Remove
-                </button>
+                </Button>
               </div>
             </div>
           )
@@ -1387,7 +1502,8 @@ export function ConnectorsPanel({
                   Coming soon
                 </span>
               </div>
-              <button
+              <Button
+                variant="link"
                 onClick={async () => {
                   await api.updateConnector({
                     id: c.id,
@@ -1396,11 +1512,11 @@ export function ConnectorsPanel({
                   })
                   onChange(await api.listConnectors())
                 }}
-                className="text-[11px]"
+                className="h-auto p-0 text-[11px]"
                 style={{ color: c.status === 'connected' ? 'var(--text-success)' : 'var(--text-accent)' }}
               >
                 {c.status === 'connected' ? 'Connected' : 'Connect'}
-              </button>
+              </Button>
             </div>
             <p className="text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
               {c.description}
@@ -1431,15 +1547,7 @@ export function SettingsPanel({
 }): React.JSX.Element {
   const setReview = async (autoReview: ReviewMode) => onChange(await api.updateSettings({ autoReview }))
   const Toggle = ({ on, onToggle }: { on: boolean; onToggle: () => void }): React.JSX.Element => (
-    <button
-      onClick={onToggle}
-      className="w-9 h-5 rounded-full relative shrink-0"
-      style={{ background: on ? 'var(--accent)' : 'var(--bg-active)' }}
-      role="switch"
-      aria-checked={on}
-    >
-      <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: on ? 18 : 2 }} />
-    </button>
+    <Switch checked={on} onCheckedChange={() => onToggle()} className="shrink-0" />
   )
   return (
     <>
@@ -1447,7 +1555,7 @@ export function SettingsPanel({
       <div className="p-4 space-y-5 text-[12.5px]">
         <div>
           <div className="mb-2 font-medium">Your name</div>
-          <input
+          <Input
             key={settings.userName ?? ''}
             defaultValue={settings.userName ?? ''}
             placeholder="Who's talking to your agents"
@@ -1456,7 +1564,7 @@ export function SettingsPanel({
               if (next === settings.userName) return
               void api.updateSettings({ userName: next || undefined }).then(onChange)
             }}
-            className="w-full rounded-[10px] px-2.5 py-2 text-[12.5px] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1"
+            className="w-full h-auto rounded-[10px] px-2.5 py-2 text-[12.5px]"
             style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}
           />
           <p className="text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
@@ -1467,10 +1575,11 @@ export function SettingsPanel({
           <div className="mb-2 font-medium">Appearance</div>
           <div className="flex gap-1.5">
             {(['dark', 'light'] as Mode[]).map((m) => (
-              <button
+              <Button
                 key={m}
+                variant="outline"
                 onClick={() => onMode(m)}
-                className="flex-1 rounded-xl px-3 py-2 text-[12.5px] capitalize flex items-center justify-center gap-1.5"
+                className="flex-1 h-auto rounded-xl px-3 py-2 text-[12.5px] capitalize flex items-center justify-center gap-1.5"
                 style={{
                   background: mode === m ? 'var(--accent-soft)' : 'transparent',
                   border: `0.5px solid ${mode === m ? 'var(--accent)' : 'var(--border)'}`,
@@ -1479,7 +1588,7 @@ export function SettingsPanel({
               >
                 {m === 'light' ? <ModeIcon /> : <ModeIcon />}
                 {m}
-              </button>
+              </Button>
             ))}
           </div>
           <p className="text-[11px] mt-1" style={{ color: 'var(--text-tertiary)' }}>
@@ -1524,10 +1633,11 @@ export function SettingsPanel({
           <div className="mb-2 font-medium">Auto Review</div>
           <div className="flex gap-1.5">
             {(['sensitive', 'always', 'off'] as ReviewMode[]).map((mode) => (
-              <button
+              <Button
                 key={mode}
+                variant="outline"
                 onClick={() => void setReview(mode)}
-                className="rounded-full px-3 py-1.5 text-[12px] capitalize"
+                className="h-auto rounded-full px-3 py-1.5 text-[12px] capitalize"
                 style={{
                   background: settings.autoReview === mode ? 'var(--accent-soft)' : 'transparent',
                   border: `0.5px solid ${settings.autoReview === mode ? 'var(--accent)' : 'var(--border)'}`,
@@ -1535,14 +1645,14 @@ export function SettingsPanel({
                 }}
               >
                 {mode}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
         <p style={{ color: 'var(--text-tertiary)' }}>Max parallel bots: {settings.maxParallelBots}</p>
-        <button onClick={() => void api.openLogs()} className="text-[11.5px]" style={{ color: 'var(--text-accent)' }}>
+        <Button variant="link" onClick={() => void api.openLogs()} className="h-auto p-0 text-[11.5px]" style={{ color: 'var(--text-accent)' }}>
           Open logs
-        </button>
+        </Button>
       </div>
     </>
   )
@@ -1552,9 +1662,9 @@ export function Toast({ text, onDismiss }: { text: string; onDismiss: () => void
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-20 rounded-full px-4 py-2 text-[13px] flex items-center gap-3" style={{ background: 'var(--raised)', border: '0.5px solid var(--border)' }}>
       <span>{text}</span>
-      <button onClick={onDismiss} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
+      <Button variant="link" onClick={onDismiss} className="h-auto p-0 text-[11px]" style={{ color: 'var(--text-accent)' }}>
         Dismiss
-      </button>
+      </Button>
     </div>
   )
 }
@@ -1570,72 +1680,8 @@ export interface MenuItem {
   separatorBefore?: boolean
 }
 
-export function ContextMenu({
-  x,
-  y,
-  items,
-  onClose,
-}: {
-  x: number
-  y: number
-  items: MenuItem[]
-  onClose: () => void
-}): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState({ x, y })
-
-  // Keep the menu inside the viewport: clamp against its measured size.
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    setPos({
-      x: Math.max(8, Math.min(x, window.innerWidth - r.width - 8)),
-      y: Math.max(8, Math.min(y, window.innerHeight - r.height - 8)),
-    })
-  }, [x, y])
-
-  useEffect(() => {
-    const onDown = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
-    }
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('mousedown', onDown)
-    window.addEventListener('keydown', onKey)
-    window.addEventListener('resize', onClose)
-    window.addEventListener('blur', onClose)
-    return () => {
-      window.removeEventListener('mousedown', onDown)
-      window.removeEventListener('keydown', onKey)
-      window.removeEventListener('resize', onClose)
-      window.removeEventListener('blur', onClose)
-    }
-  }, [onClose])
-
-  return (
-    <div ref={ref} role="menu" className="rs-menu" style={{ left: pos.x, top: pos.y }}>
-      {items.map((it, i) => (
-        <React.Fragment key={`${it.label}-${i}`}>
-          {it.separatorBefore && <div className="rs-menu-sep" />}
-          <button
-            role="menuitem"
-            className={`rs-menu-item${it.danger ? ' rs-menu-danger' : ''}`}
-            onClick={() => {
-              onClose()
-              it.onClick()
-            }}
-          >
-            {it.icon && <span className="rs-menu-icon">{it.icon}</span>}
-            <span className="flex-1 text-left truncate">{it.label}</span>
-            {it.checked && <span className="rs-menu-check">✓</span>}
-          </button>
-        </React.Fragment>
-      ))}
-    </div>
-  )
-}
+/* Agent menus now render with the shadcn DropdownMenu / ContextMenu primitives
+   inside BotRow. MenuItem describes the items App.tsx hands to them. */
 
 /* ── Sidebar ───────────────────────────────────────────────── */
 
@@ -1645,8 +1691,7 @@ export function BotRow({
   unread,
   index,
   onSelect,
-  onContextMenu,
-  onMenu,
+  menuItems,
   renaming,
   onRename,
   onRenameCancel,
@@ -1663,8 +1708,7 @@ export function BotRow({
   unread?: boolean
   index?: number
   onSelect: () => void
-  onContextMenu?: (pos: { x: number; y: number }) => void
-  onMenu?: (pos: { x: number; y: number }) => void
+  menuItems?: MenuItem[]
   renaming?: boolean
   onRename?: (name: string) => void
   onRenameCancel?: () => void
@@ -1680,7 +1724,7 @@ export function BotRow({
   const isLive = bot.status === 'running'
   const needsYou = bot.status === 'waiting'
   const rowClass = `rs-bot-row relative${dragging ? ' rs-bot-dragging' : ''}${dropBefore ? ' rs-drop-before' : ''}${dropAfter ? ' rs-drop-after' : ''}`
-  const bodyClass = `w-full text-left rounded-[12px] px-2.5 py-2.5 flex items-center gap-3 pressable transition-all motion-rise ${active ? 'bot-row-active' : 'hover:bg-[var(--sidebar-hover)]'}`
+  const bodyClass = `w-full text-left rounded-[12px] px-2.5 py-2 flex items-center gap-3 pressable transition-all motion-rise ${active ? 'bot-row-active' : 'hover:bg-[var(--sidebar-hover)]'}`
 
   const onDragOverRow = (e: React.DragEvent): void => {
     if (!onDragOver) return
@@ -1722,18 +1766,47 @@ export function BotRow({
     </>
   )
 
-  return (
+  const menuContent = menuItems?.length ? (
+    <>
+      {menuItems.map((it, i) => (
+        <React.Fragment key={`${it.label}-${i}`}>
+          {it.separatorBefore && <DropdownMenuSeparator />}
+          <DropdownMenuItem
+            variant={it.danger ? 'destructive' : 'default'}
+            onSelect={() => it.onClick()}
+            className="gap-2"
+          >
+            {it.icon ? <span className="rs-menu-icon">{it.icon}</span> : null}
+            <span className="flex-1 text-left truncate">{it.label}</span>
+            {it.checked ? <span className="ml-auto">✓</span> : null}
+          </DropdownMenuItem>
+        </React.Fragment>
+      ))}
+    </>
+  ) : null
+
+  const contextContent = menuItems?.length ? (
+    <>
+      {menuItems.map((it, i) => (
+        <React.Fragment key={`${it.label}-${i}`}>
+          {it.separatorBefore && <ContextMenuSeparator />}
+          <ContextMenuItem
+            onSelect={() => it.onClick()}
+            className={cn('gap-2', it.danger && 'text-[var(--text-danger)] focus:text-[var(--text-danger)]')}
+          >
+            {it.icon ? <span className="rs-menu-icon">{it.icon}</span> : null}
+            <span className="flex-1 text-left truncate">{it.label}</span>
+            {it.checked ? <span className="ml-auto">✓</span> : null}
+          </ContextMenuItem>
+        </React.Fragment>
+      ))}
+    </>
+  ) : null
+
+  const row = (
     <div
       className={`${rowClass} mb-1`}
       draggable={!renaming && Boolean(onDragStart)}
-      onContextMenu={
-        onContextMenu
-          ? (e) => {
-              e.preventDefault()
-              onContextMenu({ x: e.clientX, y: e.clientY })
-            }
-          : undefined
-      }
       onDragStart={
         onDragStart
           ? (e) => {
@@ -1755,10 +1828,10 @@ export function BotRow({
       onDragEnd={() => onDragEnd?.()}
     >
       {renaming ? (
-        <input
+        <Input
           autoFocus
           defaultValue={bot.name}
-          className="w-full rounded-[12px] px-2.5 py-2.5 text-[13px] font-semibold outline-none"
+          className="w-full h-auto rounded-[12px] px-2.5 py-2.5 text-[13px] font-semibold"
           style={{ background: 'var(--bg-tertiary)', color: 'var(--sidebar-text)', border: '0.5px solid var(--accent)' }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
@@ -1776,29 +1849,35 @@ export function BotRow({
           {inner}
         </button>
       )}
-      {!renaming && onMenu && (
-        <span
-          role="button"
-          tabIndex={-1}
-          aria-label="Agent menu"
-          title="More"
-          className="rs-bot-menu-btn"
-          onClick={(e) => {
-            e.stopPropagation()
-            const r = e.currentTarget.getBoundingClientRect()
-            onMenu({ x: r.right, y: r.bottom })
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            const r = e.currentTarget.getBoundingClientRect()
-            onMenu({ x: r.right, y: r.bottom })
-          }}
-        >
-          ⋯
-        </span>
-      )}
+      {!renaming && menuItems?.length ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <span
+              role="button"
+              tabIndex={-1}
+              aria-label="Agent menu"
+              title="More"
+              className="rs-bot-menu-btn"
+              onClick={(e) => e.stopPropagation()}
+            >
+              ⋯
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" side="bottom" className="w-52">
+            {menuContent}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
     </div>
+  )
+
+  if (!menuItems?.length) return row
+
+  return (
+    <RadixContextMenu>
+      <ContextMenuTrigger asChild>{row}</ContextMenuTrigger>
+      <ContextMenuContent className="w-52">{contextContent}</ContextMenuContent>
+    </RadixContextMenu>
   )
 }
 

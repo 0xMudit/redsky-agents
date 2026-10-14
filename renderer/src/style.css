@@ -1,62 +1,146 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /*
-  Red Sky theme — deep-space substrate, vivid coral accent, glass panels.
-  Token names are kept stable so all components keep working.
+  Red Sky UI — shadcn/ui on Tailwind v4, themed with tweakcn's "Notebook"
+  (paper + ink, handwritten sans, ruled borders). shadcn tokens are the source
+  of truth; the app's original token names are bridged onto them below so every
+  existing component keeps working unchanged.
 */
+@custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  /* shadcn's subtle-hover "accent" is exposed as --sh-accent so it never
+     collides with the app's brand --accent. */
+  --color-accent: var(--sh-accent);
+  --color-accent-foreground: var(--sh-accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: var(--font);
+  --font-mono: var(--mono);
+  --font-serif: Georgia, "Times New Roman", serif;
+}
+
+/* ── Base (light) — tweakcn "Notebook" light tokens + legacy bridge ── */
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+  --radius: 0.625rem;
+
+  /* shadcn tokens (Notebook, light) */
+  --background: oklch(0.9821 0 0);
+  --foreground: oklch(0.3485 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.3485 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.3485 0 0);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-ink);
+  --secondary: oklch(0.9006 0 0);
+  --secondary-foreground: oklch(0.3485 0 0);
+  --muted: oklch(0.9158 0 0);
+  --muted-foreground: oklch(0.4313 0 0);
+  --sh-accent: oklch(0.9354 0.0456 94.8549);
+  --sh-accent-foreground: oklch(0.4015 0.0436 37.9587);
+  --destructive: oklch(0.6627 0.0978 20.0041);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.5538 0.0025 17.232);
+  --input: oklch(1 0 0);
+  --ring: var(--accent);
+  --chart-1: oklch(0.3211 0 0);
+  --chart-2: oklch(0.4495 0 0);
+  --chart-3: oklch(0.5693 0 0);
+  --chart-4: oklch(0.683 0 0);
+  --chart-5: oklch(0.7921 0 0);
+  --sidebar: oklch(0.9551 0 0);
+  --sidebar-foreground: oklch(0.3485 0 0);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--accent-ink);
+  --sidebar-accent: oklch(0.9354 0.0456 94.8549);
+  --sidebar-accent-foreground: oklch(0.4015 0.0436 37.9587);
+  --sidebar-border: oklch(0.8078 0 0);
+  --sidebar-ring: oklch(0.7058 0 0);
 
   /* Type */
-  --text-primary: #f0f0f0;
-  --text-secondary: #ffffff90;
-  --text-tertiary: #ffffff55;
-  --text-accent: #ff7a66;
-  --text-danger: #ff6b5e;
-  --text-success: #43c08b;
-  --text-warning: #e8a33d;
+  --font: "Architects Daughter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --mono: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* Surfaces */
-  --substrate: #08090b;
-  --chat-fill: #0a0c0f;
-  --sidebar-tint: #07080a;
-  --panel-fill: #0f1215;
-  --bg-elevated: #141719;
-  --raised: #181c20;
-  --bg-card: #ffffff08;
-  --bg-card-hover: #ffffff0e;
-  --bg-tertiary: #ffffff10;
-  --bg-active: #ffffff1c;
-  --bg-hover: #ffffff0d;
-  --border: #ffffff12;
-  --border-strong: #ffffff22;
-  --border-accent: #f4513f44;
-
-  /* Accent / coral */
+  /* Brand accent (default; `data-theme` overrides — see below) */
   --accent: #f4513f;
   --accent-strong: #ff5b47;
-  --accent-soft: #f4513f18;
-  --accent-glow: #f4513f55;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-glow: color-mix(in srgb, var(--accent) 34%, transparent);
   --accent-ink: #1a0d09;
-  --fill-emphasis: #f4513f;
-  --fill-secondary: #ffffff0f;
+  --fill-emphasis: var(--accent);
+  --fill-secondary: var(--secondary);
+
+  /* Legacy bridge — surfaces & text derive from the Notebook tokens so they
+     re-tint automatically when the mode flips. */
+  --text-primary: var(--foreground);
+  --text-secondary: color-mix(in oklch, var(--foreground) 76%, transparent);
+  --text-tertiary: color-mix(in oklch, var(--foreground) 56%, transparent);
+  --text-accent: color-mix(in oklch, var(--accent) 66%, var(--foreground));
+  --text-danger: oklch(0.55 0.17 25);
+  --text-success: oklch(0.54 0.12 155);
+  --text-warning: oklch(0.6 0.12 70);
+  --substrate: var(--background);
+  --chat-fill: var(--background);
+  --sidebar-tint: var(--sidebar);
+  --panel-fill: var(--card);
+  --bg-elevated: var(--card);
+  --raised: var(--card);
+  --bg-card: color-mix(in oklch, var(--foreground) 5%, transparent);
+  --bg-card-hover: color-mix(in oklch, var(--foreground) 9%, transparent);
+  --bg-tertiary: color-mix(in oklch, var(--foreground) 7%, transparent);
+  --bg-active: color-mix(in oklch, var(--foreground) 13%, transparent);
+  --bg-hover: color-mix(in oklch, var(--foreground) 7%, transparent);
+  --border-strong: color-mix(in oklch, var(--border) 60%, var(--foreground));
+  --border-accent: color-mix(in srgb, var(--accent) 42%, transparent);
 
   /* Bubbles */
-  --bubble-user: linear-gradient(135deg, #f4513f 0%, #e03d2c 100%);
-  --bubble-user-solid: #f4513f;
-  --bubble-user-ink: #fff8f7;
-  --bubble-agent: #ffffff07;
-  --bubble-agent-border: #ffffff14;
+  --bubble-user: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 74%, #fff) 100%);
+  --bubble-user-solid: var(--accent);
+  --bubble-user-ink: var(--accent-ink);
+  --bubble-agent: var(--card);
+  --bubble-agent-border: color-mix(in oklch, var(--foreground) 12%, transparent);
 
   /* Sidebar */
-  --sidebar-selected: #ffffff12;
-  --sidebar-hover: #ffffff09;
-  --sidebar-text: #ffffffe8;
-  --sidebar-muted: #ffffff88;
-  --sidebar-faint: #ffffff44;
-
-  --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sidebar-selected: var(--sidebar-accent);
+  --sidebar-hover: color-mix(in oklch, var(--foreground) 8%, transparent);
+  --sidebar-text: var(--sidebar-foreground);
+  --sidebar-muted: color-mix(in oklch, var(--sidebar-foreground) 62%, transparent);
+  --sidebar-faint: color-mix(in oklch, var(--sidebar-foreground) 40%, transparent);
 
   /* Motion */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -66,17 +150,67 @@
   --dur-2: 220ms;
   --dur-3: 380ms;
 
-  color-scheme: dark;
-  --shadow-lift: 0 18px 44px -24px rgba(0, 0, 0, 0.85);
+  --shadow-lift: 0 18px 44px -24px rgba(30, 40, 60, 0.45);
 
   /* Overlay helpers */
-  --glass-fill: rgba(255, 255, 255, 0.04);
-  --glass-fill-strong: rgba(255, 255, 255, 0.06);
-  --code-fill: rgba(0, 0, 0, 0.4);
-  --code-fill-soft: rgba(0, 0, 0, 0.35);
+  --glass-fill: color-mix(in oklch, var(--card) 72%, transparent);
+  --glass-fill-strong: color-mix(in oklch, var(--card) 88%, transparent);
+  /* Code surfaces stay dark in both modes (the syntax tokens are tuned for a
+     dark background), so code text is a fixed light ink — never the mode text. */
+  --code-fill: oklch(0.27 0 0);
+  --code-fill-soft: color-mix(in oklch, var(--foreground) 8%, transparent);
+  --code-ink: oklch(0.93 0 0);
 }
 
-/* ── Accent themes. `data-theme` lives on <html>. ─────────── */
+/* ── Dark mode — tweakcn "Notebook" dark tokens ─────────── */
+:root[data-mode="dark"] {
+  color-scheme: dark;
+
+  --background: oklch(0.2891 0 0);
+  --foreground: oklch(0.8945 0 0);
+  --card: oklch(0.3211 0 0);
+  --card-foreground: oklch(0.8945 0 0);
+  --popover: oklch(0.3211 0 0);
+  --popover-foreground: oklch(0.8945 0 0);
+  --secondary: oklch(0.4676 0 0);
+  --secondary-foreground: oklch(0.8078 0 0);
+  --muted: oklch(0.3904 0 0);
+  --muted-foreground: oklch(0.7058 0 0);
+  --sh-accent: oklch(0.9067 0 0);
+  --sh-accent-foreground: oklch(0.3211 0 0);
+  --destructive: oklch(0.7915 0.0491 18.241);
+  --destructive-foreground: oklch(0.2891 0 0);
+  --border: oklch(0.4276 0 0);
+  --input: oklch(0.3211 0 0);
+  --chart-1: oklch(0.9521 0 0);
+  --chart-2: oklch(0.8576 0 0);
+  --chart-3: oklch(0.7572 0 0);
+  --chart-4: oklch(0.6534 0 0);
+  --chart-5: oklch(0.5452 0 0);
+  --sidebar: oklch(0.2478 0 0);
+  --sidebar-foreground: oklch(0.8945 0 0);
+  --sidebar-accent: oklch(0.9067 0 0);
+  --sidebar-accent-foreground: oklch(0.3211 0 0);
+  --sidebar-border: oklch(0.4276 0 0);
+  --sidebar-ring: oklch(0.8078 0 0);
+
+  /* Legacy bridge values that need a mode-specific constant. Everything else
+     (text, cards, sidebar, bubbles) is derived from --foreground/--card and
+     therefore re-tints on its own. */
+  --text-accent: color-mix(in oklch, var(--accent) 74%, var(--foreground));
+  /* danger/success must lift on the dark substrate to clear 4.5:1 */
+  --text-danger: oklch(0.72 0.16 25);
+  --text-success: oklch(0.72 0.13 155);
+  --chat-fill: oklch(0.262 0 0);
+  --raised: oklch(0.34 0 0);
+  --code-fill: oklch(0.24 0 0);
+  --glass-fill: color-mix(in oklch, var(--card) 70%, transparent);
+  --glass-fill-strong: color-mix(in oklch, var(--card) 86%, transparent);
+  --shadow-lift: 0 18px 44px -24px rgba(0, 0, 0, 0.85);
+}
+
+/* ── Accent themes. `data-theme` lives on <html> and overrides only the brand
+     colour; the Notebook surfaces/type stay put. ─────────── */
 :root[data-theme="aurora"] {
   --accent: #7c6aff;
   --accent-strong: #8f7dff;
@@ -84,9 +218,8 @@
   --accent-glow: #7c6aff66;
   --accent-ink: #0c0a1c;
   --fill-emphasis: #7c6aff;
-  --text-accent: #a99bff;
+  --text-accent: color-mix(in srgb, var(--accent) 64%, var(--foreground));
   --border-accent: #7c6aff4d;
-  --bubble-user: linear-gradient(135deg, #7c6aff 0%, #5b45d8 100%);
   --bubble-user-solid: #7c6aff;
 }
 :root[data-theme="emerald"] {
@@ -96,9 +229,8 @@
   --accent-glow: #2fbf8f66;
   --accent-ink: #04150f;
   --fill-emphasis: #2fbf8f;
-  --text-accent: #5fe0b4;
+  --text-accent: color-mix(in srgb, var(--accent) 64%, var(--foreground));
   --border-accent: #2fbf8f4d;
-  --bubble-user: linear-gradient(135deg, #2fbf8f 0%, #1e9a71 100%);
   --bubble-user-solid: #2fbf8f;
 }
 :root[data-theme="amber"] {
@@ -108,9 +240,8 @@
   --accent-glow: #f59e2c66;
   --accent-ink: #1b1103;
   --fill-emphasis: #f59e2c;
-  --text-accent: #ffc46b;
+  --text-accent: color-mix(in srgb, var(--accent) 64%, var(--foreground));
   --border-accent: #f59e2c4d;
-  --bubble-user: linear-gradient(135deg, #f59e2c 0%, #d9820f 100%);
   --bubble-user-solid: #f59e2c;
 }
 :root[data-theme="rose"] {
@@ -120,9 +251,8 @@
   --accent-glow: #ff5c8a66;
   --accent-ink: #1c050d;
   --fill-emphasis: #ff5c8a;
-  --text-accent: #ff9ab5;
+  --text-accent: color-mix(in srgb, var(--accent) 64%, var(--foreground));
   --border-accent: #ff5c8a4d;
-  --bubble-user: linear-gradient(135deg, #ff5c8a 0%, #e0436d 100%);
   --bubble-user-solid: #ff5c8a;
 }
 :root[data-theme="ice"] {
@@ -132,78 +262,26 @@
   --accent-glow: #35c7e066;
   --accent-ink: #03151a;
   --fill-emphasis: #35c7e0;
-  --text-accent: #7fe4f5;
+  --text-accent: color-mix(in srgb, var(--accent) 64%, var(--foreground));
   --border-accent: #35c7e04d;
-  --bubble-user: linear-gradient(135deg, #35c7e0 0%, #1f9fb8 100%);
   --bubble-user-solid: #35c7e0;
 }
 :root[data-theme="mainline"] {
-  --accent: #6f7885;
-  --accent-strong: #7e8896;
-  --accent-soft: #6f78851f;
-  --accent-glow: #6f788566;
+  --accent: #79828f;
+  --accent-strong: #87919e;
+  --accent-soft: #79828f1f;
+  --accent-glow: #79828f66;
   --accent-ink: #0c0f13;
-  --fill-emphasis: #6f7885;
-  --text-accent: #aab4c3;
-  --border-accent: #6f78854d;
-  --bubble-user: linear-gradient(135deg, #525a67 0%, #7e8896 100%);
-  --bubble-user-solid: #6f7885;
+  --fill-emphasis: #79828f;
+  --text-accent: color-mix(in srgb, var(--accent) 64%, var(--foreground));
+  --border-accent: #79828f4d;
+  --bubble-user-solid: #79828f;
 }
 
-/* ── Light mode. `data-mode` lives on <html> and sits last so
-     theme accents keep flowing while text and surfaces re-tint. ── */
-:root[data-mode="light"] {
-  color-scheme: light;
-
-  /* Type */
-  --text-primary: #1a1d23;
-  --text-secondary: #474d58;
-  --text-tertiary: #747b89;
-  --text-accent: color-mix(in srgb, var(--accent) 60%, #000);
-  --text-danger: #d6453a;
-  --text-success: #12896a;
-  --text-warning: #a9790f;
-
-  /* Surfaces */
-  --substrate: #f3f4f6;
-  --chat-fill: #fafafb;
-  --sidebar-tint: #ebedf0;
-  --panel-fill: #ffffff;
-  --bg-elevated: #ffffff;
-  --raised: #ffffff;
-  --bg-card: #0b0e1212;
-  --bg-card-hover: #0b0e1218;
-  --bg-tertiary: #0b0e120a;
-  --bg-active: #0b0e121a;
-  --bg-hover: #0b0e120c;
-  --border: #1c20283b;
-  --border-strong: #1c202851;
-  --border-accent: color-mix(in srgb, var(--accent) 42%, transparent);
-
-  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
-  --accent-glow: color-mix(in srgb, var(--accent) 32%, transparent);
-  --accent-ink: #ffffff;
-  --fill-secondary: #1c20281c;
-
-  /* Bubbles */
-  --bubble-user-ink: #ffffff;
-  --bubble-agent: #ffffff;
-  --bubble-agent-border: #1c202816;
-
-  /* Sidebar */
-  --sidebar-selected: #1c202817;
-  --sidebar-hover: #1c20280c;
-  --sidebar-text: #1c2028f0;
-  --sidebar-muted: #1c202888;
-  --sidebar-faint: #1c202852;
-
-  /* Overlay helpers */
-  --glass-fill: rgba(255, 255, 255, 0.62);
-  --glass-fill-strong: rgba(255, 255, 255, 0.78);
-  --code-fill: rgba(13, 15, 19, 0.85);
-  --code-fill-soft: rgba(13, 15, 19, 0.1);
-
-  --shadow-lift: 0 18px 44px -24px rgba(30, 40, 60, 0.45);
+/* The wordmark is a light gradient tuned for the dark theme; on light surfaces
+   flip it to dark ink so the brand text stays legible. */
+:root[data-mode="light"] .logo-word {
+  background-image: linear-gradient(90deg, #1a1d23, #c2482f, #1a1d23, #c2482f);
 }
 
 html, body, #root {
@@ -274,6 +352,7 @@ button {
 .markdown-body ul { list-style: disc; padding-left: 1.5em; margin: 0.4em 0; }
 .markdown-body pre {
   background: var(--code-fill);
+  color: var(--code-ink);
   border: 0.5px solid var(--border);
   border-radius: 12px;
   padding: 12px 14px;
@@ -588,6 +667,57 @@ button {
   opacity: 0.45;
   animation-duration: 1.5s;
   animation-direction: reverse;
+}
+
+/* ── Setup checklist (slow spinner → check cascade) ───────── */
+.setup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.setup-item {
+  animation: fade-up var(--dur-3) var(--ease-out) both;
+}
+.setup-bullet {
+  position: relative;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  transition: background-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
+}
+.setup-bullet[data-state='pending'] {
+  background: color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+.setup-bullet[data-state='pending']::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  border-top-color: var(--accent);
+  animation: spin-slow 0.7s linear infinite;
+}
+.setup-bullet[data-state='ok'] {
+  background: var(--text-success);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--text-success) 16%, transparent);
+  animation: hit-pulse 0.5s var(--ease-spring) both;
+}
+.setup-bullet[data-state='fail'] {
+  background: var(--text-danger);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--text-danger) 16%, transparent);
+}
+.setup-check-path {
+  stroke-dasharray: 23;
+  stroke-dashoffset: 23;
+  animation: check-draw 0.45s var(--ease-out) 0.1s forwards;
+}
+@keyframes check-draw {
+  to { stroke-dashoffset: 0; }
 }
 
 /* ── Working window (life tip while an agent runs) ────────── */

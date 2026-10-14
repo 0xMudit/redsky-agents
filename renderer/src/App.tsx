@@ -12,12 +12,9 @@ ActivityPanel,
   BellIcon,
   BlobAvatar,
   BotRow,
-  ChevronDownIcon,
-  ChevronUpIcon,
   CommandIcon,
   CommandPalette,
   ConnectorsPanel,
-  ContextMenu,
   EmptyState,
   GearIcon,
   getStoredMode,
@@ -25,6 +22,7 @@ ActivityPanel,
   HistoryIcon,
   HistoryPanel,
   IconBtn,
+  IonIcon,
   Logo,
   MemoryIcon,
   MemoryPanel,
@@ -39,7 +37,6 @@ ActivityPanel,
   RoomsPanel,
   RoutineIcon,
   RoutinePanel,
-  SearchIcon,
   SendIcon,
   SettingsPanel,
   SparkIcon,
@@ -51,6 +48,23 @@ ActivityPanel,
 } from './ui'
 import type { Command, MenuItem, Mode, ThemeName } from './ui'
 import type { AppSettings } from './types'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { ConfirmHost, alertDialog, confirmDialog } from '@/components/ui/confirm'
 
 type Boot = 'starting' | 'online' | 'offline'
 type Panel = 'none' | 'activity' | 'notices' | 'rooms' | 'memory' | 'history' | 'routines' | 'connectors' | 'settings'
@@ -62,11 +76,47 @@ const QUICK = [
   { label: 'Another angle', text: 'Same goal, different angle. Surprise me.' },
 ]
 
-function Check({ ok }: { ok: boolean }): React.JSX.Element {
+function SetupCheckRow({
+  label,
+  resolved,
+  ok = true,
+  delay,
+  hint,
+}: {
+  label: React.ReactNode
+  resolved: boolean
+  ok?: boolean
+  delay: number
+  hint?: React.ReactNode
+}): React.JSX.Element {
+  const [settled, setSettled] = useState(false)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(true), 520 + delay * 260)
+    return () => clearTimeout(timer)
+  }, [delay])
+
+  const state: 'pending' | 'ok' | 'fail' = resolved && settled ? (ok ? 'ok' : 'fail') : 'pending'
+
   return (
-    <span className="inline-block w-[14px] text-center" style={{ color: ok ? 'var(--text-success)' : 'var(--text-danger)' }}>
-      {ok ? '✓' : '✗'}
-    </span>
+    <div className="setup-item flex items-center gap-2.5" style={{ animationDelay: `${delay * 90}ms` }}>
+      <span className="setup-bullet" data-state={state} aria-hidden="true">
+        {state === 'ok' ? (
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round">
+            <path className="setup-check-path" d="M4.5 12.5 9.5 17.5 19.5 6.5" />
+          </svg>
+        ) : state === 'fail' ? (
+          <span className="text-[10px] font-bold leading-none">✗</span>
+        ) : null}
+      </span>
+      <span
+        className="flex-1 transition-colors duration-200"
+        style={{ color: state === 'pending' ? 'var(--text-secondary)' : 'var(--text-primary)' }}
+      >
+        {label}
+      </span>
+      {hint}
+    </div>
   )
 }
 
@@ -83,6 +133,16 @@ function Step({ n, done, children }: { n: number; done: boolean; children: React
         {done ? '✓' : n}
       </span>
       <div className="text-[13px]">{children}</div>
+    </div>
+  )
+}
+
+function SidebarSection({ label }: { label: string }): React.JSX.Element {
+  return (
+    <div className="flex items-center px-2.5 pt-3 pb-1">
+      <span className="text-[10.5px] font-medium uppercase tracking-[0.12em]" style={{ color: 'var(--sidebar-faint)' }}>
+        {label}
+      </span>
     </div>
   )
 }
@@ -155,7 +215,6 @@ export default function App(): React.JSX.Element {
       return true
     }
   })
-  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null)
@@ -246,7 +305,6 @@ export default function App(): React.JSX.Element {
   }, [upsertBot])
 
   const selected = useMemo(() => bots.find((b) => b.id === selectedId) ?? null, [bots, selectedId])
-  const menuBot = useMemo(() => (menu ? (bots.find((b) => b.id === menu.id) ?? null) : null), [menu, bots])
 
   const cliMissing = boot === 'offline' && detail === 'opencode-missing'
   const setupReady = boot === 'online' && models.length > 0 && (setup?.opencode.found ?? true)
@@ -347,6 +405,18 @@ export default function App(): React.JSX.Element {
     })
   }, [bots, search])
 
+  const groups = useMemo(() => {
+    const pinned: Bot[] = []
+    const recent: Bot[] = []
+    const archived: Bot[] = []
+    for (const b of visible) {
+      if (b.archived) archived.push(b)
+      else if (b.pinned) pinned.push(b)
+      else recent.push(b)
+    }
+    return { pinned, recent, archived }
+  }, [visible])
+
   useEffect(() => {
     const q = search.trim()
     if (q.length < 2) {
@@ -384,7 +454,7 @@ export default function App(): React.JSX.Element {
         setEditor({ name: bot.name, job: bot.job })
         requestAnimationFrame(() => document.getElementById('composer')?.focus())
       } catch (err) {
-        alert((err as Error).message)
+        void alertDialog({ title: 'Something went wrong', body: (err as Error).message })
       }
     },
     [upsertBot, openBot],
@@ -421,7 +491,7 @@ export default function App(): React.JSX.Element {
         setStreak(bumpStreak())
         requestAnimationFrame(() => scrollToEnd(true))
       } catch (err) {
-        alert((err as Error).message)
+        void alertDialog({ title: 'Something went wrong', body: (err as Error).message })
       } finally {
         setSending(false)
       }
@@ -444,7 +514,7 @@ export default function App(): React.JSX.Element {
       try {
         upsertBot(await api.renameBot(bot.id, { name: trimmed }))
       } catch (err) {
-        alert((err as Error).message)
+        void alertDialog({ title: 'Something went wrong', body: (err as Error).message })
       }
     },
     [upsertBot],
@@ -518,7 +588,13 @@ export default function App(): React.JSX.Element {
       label: 'Clear chat',
       separatorBefore: true,
       onClick: () => {
-        if (confirm(`Clear chat with ${bot.name}?`)) void api.clearThread(bot.id).then(upsertBot)
+        void confirmDialog({
+          title: `Clear chat with ${bot.name}?`,
+          body: 'This permanently removes the conversation history for this agent.',
+          confirmLabel: 'Clear chat',
+        }).then((ok) => {
+          if (ok) void api.clearThread(bot.id).then(upsertBot)
+        })
       },
     },
     {
@@ -526,7 +602,14 @@ export default function App(): React.JSX.Element {
       danger: true,
       separatorBefore: true,
       onClick: () => {
-        if (confirm(`Delete ${bot.name}?`)) void api.deleteBot(bot.id)
+        void confirmDialog({
+          title: `Delete ${bot.name}?`,
+          body: 'This agent and its history will be removed. This cannot be undone.',
+          confirmLabel: 'Delete',
+          danger: true,
+        }).then((ok) => {
+          if (ok) void api.deleteBot(bot.id)
+        })
       },
     },
   ]
@@ -628,6 +711,37 @@ export default function App(): React.JSX.Element {
     )
   }
 
+  const renderBotRow = (b: Bot, i: number): React.JSX.Element => (
+    <BotRow
+      key={b.id}
+      bot={b}
+      index={i}
+      active={b.id === selected?.id}
+      unread={Boolean(unread[b.id])}
+              onSelect={() => openBot(b.id)}
+              menuItems={menuItemsFor(b)}
+              renaming={renamingId === b.id}
+      onRename={(name) => void commitRename(b, name)}
+      onRenameCancel={() => setRenamingId(null)}
+      dragging={dragId === b.id}
+      dropBefore={dropTarget?.id === b.id && dropTarget.before}
+      dropAfter={dropTarget?.id === b.id && !dropTarget.before}
+      onDragStart={() => setDragId(b.id)}
+      onDragOver={(before) => {
+        if (dragId && dragId !== b.id) setDropTarget({ id: b.id, before })
+      }}
+      onDrop={() => {
+        if (dragId && dropTarget?.id === b.id) moveBot(dragId, b.id, dropTarget.before)
+        setDragId(null)
+        setDropTarget(null)
+      }}
+      onDragEnd={() => {
+        setDragId(null)
+        setDropTarget(null)
+      }}
+    />
+  )
+
   return (
     <div className="app-shell flex h-full text-[var(--text-primary)]">
       {/* ── Sidebar ────────────────────────────────────────────── */}
@@ -641,85 +755,54 @@ export default function App(): React.JSX.Element {
           </span>
         </div>
 
-        <div className="window-no-drag px-3 mb-3">
-          <button
+        <div className="window-no-drag px-2.5 mb-2">
+          <Button
             onClick={() => void newAgent()}
             disabled={boot !== 'online'}
-            className="w-full h-9 rounded-[10px] flex items-center justify-center gap-2 text-[13px] font-medium disabled:opacity-40 btn-sheen pressable"
+            className="w-full h-9 rounded-[10px] gap-2 text-[13px] font-medium btn-sheen pressable"
             style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}
           >
             <PlusIcon size={15} />
             New chat
-          </button>
+          </Button>
         </div>
 
         <label
-          className="window-no-drag mx-3 mb-2 h-9 rounded-[10px] flex items-center gap-2 px-2.5"
+          className="window-no-drag mx-2.5 mb-1.5 h-9 rounded-[10px] flex items-center gap-2 px-2.5"
           style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--sidebar-faint)' }}
         >
-          <SearchIcon />
-          <input
+          <IonIcon name="search-outline" size={16} />
+          <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search agents"
-            className="min-w-0 flex-1 bg-transparent text-[13px] leading-[18px] text-[var(--sidebar-text)] placeholder:text-[var(--sidebar-faint)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1"
+            className="min-w-0 flex-1 h-auto bg-transparent border-0 shadow-none px-0 text-[13px] leading-[18px] text-[var(--sidebar-text)] placeholder:text-[var(--sidebar-faint)] focus-visible:ring-0"
           />
         </label>
 
-        {bots.length > 0 && (
-          <div className="window-no-drag flex gap-2 overflow-x-auto px-3 pb-2 pt-1">
-            {bots.slice(0, 12).map((b) => (
-              <button key={b.id} onClick={() => openBot(b.id)} className={unread[b.id] || b.status === 'waiting' ? 'story-ring shrink-0 rounded-full' : 'shrink-0 rounded-full'} title={b.name}>
-                <BlobAvatar hue={b.hue} size={34} />
-              </button>
-            ))}
-          </div>
-        )}
-
-        <nav className="flex-1 overflow-y-auto px-2 pb-2">
-          {visible.map((b, i) => (
-            <BotRow
-              key={b.id}
-              bot={b}
-              index={i}
-              active={b.id === selected?.id}
-              unread={Boolean(unread[b.id])}
-              onSelect={() => openBot(b.id)}
-              onContextMenu={(pos) => setMenu({ id: b.id, x: pos.x, y: pos.y })}
-              onMenu={(pos) => setMenu({ id: b.id, x: pos.x, y: pos.y })}
-              renaming={renamingId === b.id}
-              onRename={(name) => void commitRename(b, name)}
-              onRenameCancel={() => setRenamingId(null)}
-              dragging={dragId === b.id}
-              dropBefore={dropTarget?.id === b.id && dropTarget.before}
-              dropAfter={dropTarget?.id === b.id && !dropTarget.before}
-              onDragStart={() => setDragId(b.id)}
-              onDragOver={(before) => {
-                if (dragId && dragId !== b.id) setDropTarget({ id: b.id, before })
-              }}
-              onDrop={() => {
-                if (dragId && dropTarget?.id === b.id) moveBot(dragId, b.id, dropTarget.before)
-                setDragId(null)
-                setDropTarget(null)
-              }}
-              onDragEnd={() => {
-                setDragId(null)
-                setDropTarget(null)
-              }}
-            />
-          ))}
+        <nav className="flex-1 overflow-y-auto px-1.5 pb-2">
+          {search.trim() && visible.length > 0 ? <SidebarSection label="Agents" /> : null}
+          {!search.trim() && groups.pinned.length > 0 ? <SidebarSection label="Pinned" /> : null}
+          {groups.pinned.map((b, i) => renderBotRow(b, i))}
+          {!search.trim() && groups.pinned.length > 0 && groups.recent.length > 0 ? <SidebarSection label="Recents" /> : null}
+          {groups.recent.map((b, i) => renderBotRow(b, groups.pinned.length + i))}
+          {groups.archived.length > 0 ? <SidebarSection label="Archived" /> : null}
+          {groups.archived.map((b, i) => renderBotRow(b, groups.pinned.length + groups.recent.length + i))}
           {!bots.length && (
             <p className="px-3 py-6 text-[12px] leading-relaxed" style={{ color: 'var(--sidebar-faint)' }}>
               Create an agent, give it a job, get a hit of finished work.
             </p>
           )}
+          {bots.length > 0 && !visible.length && (
+            <p className="px-3 py-6 text-[12px] leading-relaxed" style={{ color: 'var(--sidebar-faint)' }}>
+              No agents match “{search.trim()}”.
+            </p>
+          )}
           {hits.length > 0 && (
-            <div className="mt-3">
-              <p className="px-2 pb-1 text-[11px] uppercase tracking-wide" style={{ color: 'var(--sidebar-faint)' }}>
-                In workspace
-              </p>
+            <div>
+              <SidebarSection label="Workspace" />
               {hits.map((h) => (
-                <button key={h.id} onClick={() => openHit(h)} title={h.path} className="w-full text-left rounded-[8px] px-2 py-1.5 mb-0.5 hover:bg-[var(--sidebar-hover)]">
+                <button key={h.id} onClick={() => openHit(h)} title={h.path} className="w-full text-left rounded-[8px] px-2.5 py-1.5 mb-0.5 hover:bg-[var(--sidebar-hover)]">
                   <span className="block text-[12px] truncate" style={{ color: 'var(--sidebar-text)' }}>
                     {h.title}
                   </span>
@@ -733,35 +816,35 @@ export default function App(): React.JSX.Element {
         </nav>
 
         {sectionsOpen ? (
-          <div className="px-2 py-2 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
-            <div className="flex items-center justify-between pl-2 pr-1 pb-1">
-              <span className="text-[10.5px] uppercase tracking-wider" style={{ color: 'var(--sidebar-faint)' }}>
+          <div className="px-1.5 py-2 shrink-0" style={{ borderTop: '0.5px solid var(--border)' }}>
+            <button
+              onClick={() => {
+                setSectionsOpen(false)
+                try {
+                  localStorage.setItem('redsky.sections', '0')
+                } catch {
+                  /* ignore */
+                }
+              }}
+              title="Collapse app tools"
+              className="w-full flex items-center justify-between rounded-[8px] pl-2.5 pr-1.5 py-1 hover:bg-[var(--sidebar-hover)] pressable"
+            >
+              <span className="text-[10.5px] font-medium uppercase tracking-[0.12em]" style={{ color: 'var(--sidebar-faint)' }}>
                 App
               </span>
-              <IconBtn
-                active={false}
-                onClick={() => {
-                  setSectionsOpen(false)
-                  try {
-                    localStorage.setItem('redsky.sections', '0')
-                  } catch {
-                    /* ignore */
-                  }
-                }}
-                title="Collapse app tools"
-              >
-                <ChevronDownIcon />
-              </IconBtn>
-            </div>
-            <NavItem active={panel === 'rooms'} onClick={() => openPanel('rooms')} icon={<RoomsIcon />} label="Rooms" />
-            <NavItem active={panel === 'routines'} onClick={() => openPanel('routines')} icon={<RoutineIcon />} label="Schedules" />
-            <NavItem active={panel === 'memory'} onClick={() => openPanel('memory')} icon={<MemoryIcon />} label="Memory" />
-            <NavItem active={panel === 'history'} onClick={() => openPanel('history')} icon={<HistoryIcon />} label="History" />
-            <NavItem active={panel === 'connectors'} onClick={() => openPanel('connectors')} icon={<PlugIcon />} label="Connectors" />
-            <NavItem active={panel === 'settings'} onClick={() => openPanel('settings')} icon={<GearIcon />} label="Settings" />
+              <span className="w-5 h-5 flex items-center justify-center" style={{ color: 'var(--sidebar-faint)' }}>
+                <IonIcon name="chevron-down-outline" size={14} />
+              </span>
+            </button>
+            <NavItem active={panel === 'rooms'} onClick={() => openPanel('rooms')} icon={<IonIcon name="people-outline" size={16} />} label="Rooms" />
+            <NavItem active={panel === 'routines'} onClick={() => openPanel('routines')} icon={<IonIcon name="calendar-outline" size={16} />} label="Schedules" />
+            <NavItem active={panel === 'memory'} onClick={() => openPanel('memory')} icon={<IonIcon name="library-outline" size={16} />} label="Memory" />
+            <NavItem active={panel === 'history'} onClick={() => openPanel('history')} icon={<IonIcon name="time-outline" size={16} />} label="History" />
+            <NavItem active={panel === 'connectors'} onClick={() => openPanel('connectors')} icon={<IonIcon name="git-network-outline" size={16} />} label="Connectors" />
+            <NavItem active={panel === 'settings'} onClick={() => openPanel('settings')} icon={<IonIcon name="settings-outline" size={16} />} label="Settings" />
           </div>
         ) : (
-          <div className="px-2 py-1.5 shrink-0 flex justify-center" style={{ borderTop: '0.5px solid var(--border)' }}>
+          <div className="px-1.5 py-1.5 shrink-0 flex justify-center" style={{ borderTop: '0.5px solid var(--border)' }}>
             <IconBtn
               active={panel !== 'none'}
               onClick={() => {
@@ -774,7 +857,7 @@ export default function App(): React.JSX.Element {
               }}
               title="App tools: rooms, schedules, memory, connectors, settings"
             >
-              <ChevronUpIcon />
+              <IonIcon name="chevron-up-outline" size={14} />
             </IconBtn>
           </div>
         )}
@@ -819,28 +902,29 @@ export default function App(): React.JSX.Element {
             <IconBtn active={false} onClick={() => setMode(mode === 'dark' ? 'light' : 'dark')} title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
               <ModeIcon />
             </IconBtn>
-            <button
+            <Button
+              variant="outline"
               onClick={() => setPalette(true)}
-              className="window-no-drag flex items-center gap-1.5 text-[11.5px] pl-2.5 pr-1.5 py-1.5 rounded-lg hover:bg-[var(--bg-hover)] pressable"
+              className="window-no-drag flex h-auto items-center gap-1.5 text-[11.5px] pl-2.5 pr-1.5 py-1.5 rounded-lg pressable"
               style={{ color: 'var(--text-secondary)', border: '0.5px solid var(--border)' }}
               title="Command palette"
             >
               <CommandIcon />
               <span className="hidden lg:inline">Commands</span>
               <span className="cmdk-kbd">{modKey} K</span>
-            </button>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="bg-transparent text-[11.5px] px-2 py-1.5 max-w-48 rounded-lg outline-none hover:bg-[var(--bg-hover)]"
-              style={{ color: 'var(--text-secondary)', border: '0.5px solid var(--border)' }}
-            >
-              {models.map((m) => (
-                <option key={m.id || m.label} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
+            </Button>
+            <Select value={model} onValueChange={setModel}>
+              <SelectTrigger className="h-auto text-[11.5px] px-2 py-1.5 max-w-48 rounded-lg" style={{ color: 'var(--text-secondary)', border: '0.5px solid var(--border)' }}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {models.map((m) => (
+                  <SelectItem key={m.id || m.label} value={m.id}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <IconBtn active={panel === 'activity'} onClick={() => openPanel('activity')} title="Activity panel">
               <ActivityIcon />
             </IconBtn>
@@ -854,14 +938,15 @@ export default function App(): React.JSX.Element {
                 )}
               </span>
             </IconBtn>
-            <button
+            <Button
+              variant="outline"
               onClick={() => void api.openFeedback()}
-              className="window-no-drag text-[11px] px-2.5 py-1.5 rounded-lg hover:bg-[var(--bg-hover)]"
+              className="window-no-drag h-auto text-[11px] px-2.5 py-1.5 rounded-lg"
               style={{ color: 'var(--text-accent)', border: '0.5px solid color-mix(in srgb, var(--text-accent) 40%, transparent)' }}
               title="Report a beta bug or request a feature — opens a prefilled GitHub issue"
             >
               Beta
-            </button>
+            </Button>
           </div>
         </header>
 
@@ -940,14 +1025,15 @@ export default function App(): React.JSX.Element {
                   {lastWasResult && (
                     <div className="flex flex-wrap gap-1.5">
                       {QUICK.map((q, i) => (
-                        <button
+                        <Button
                           key={q.label}
+                          variant="outline"
                           onClick={() => void send(q.text)}
-                          className="rounded-full px-3 py-1.5 text-[12px] hover:bg-[var(--bg-hover)] pressable motion-rise"
+                          className="h-auto rounded-full px-3 py-1.5 text-[12px] pressable motion-rise"
                           style={{ border: '0.5px solid var(--border)', color: 'var(--text-secondary)', animationDelay: `${i * 45}ms` }}
                         >
                           {q.label}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   )}
@@ -968,41 +1054,44 @@ export default function App(): React.JSX.Element {
             </div>
 
             {showJump && (
-              <button
+              <Button
+                variant="outline"
                 onClick={() => {
                   stickRef.current = true
                   scrollToEnd(true)
                   setShowJump(false)
                 }}
-                className="absolute bottom-28 right-8 rounded-full px-3 py-1.5 text-[12px]"
+                className="absolute bottom-28 right-8 h-auto rounded-full px-3 py-1.5 text-[12px]"
                 style={{ background: 'var(--raised)', border: '0.5px solid var(--border)' }}
               >
                 Jump to latest
-              </button>
+              </Button>
             )}
 
             {nextHit && (
-              <button
+              <Button
                 onClick={() => openBot(nextHit.id)}
-                className="absolute bottom-28 left-8 rounded-full px-3 py-1.5 text-[12px] flex items-center gap-2"
+                className="absolute bottom-28 left-8 h-auto rounded-full px-3 py-1.5 text-[12px] gap-2"
                 style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}
               >
                 Next hit · {nextHit.name}
-              </button>
+              </Button>
             )}
 
             <footer className="px-6 pb-5 pt-2">
               <div className="mx-auto w-full max-w-3xl">
                 <div className={`flex items-end gap-2 rounded-2xl px-2.5 py-2${selected?.status === 'running' ? ' composer-running' : ''}`} style={{ background: 'var(--raised)', border: '0.5px solid var(--border)' }}>
-                  <button
-                    className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center hover:bg-[var(--bg-hover)]"
+                  <Button
+                    variant="secondary"
+                    size="icon"
+                    className="w-8 h-8 shrink-0 rounded-full pressable"
                     style={{ background: 'var(--fill-secondary)', color: 'var(--text-secondary)' }}
                     title="New agent"
                     onClick={() => void newAgent()}
                   >
                     <PlusIcon size={15} />
-                  </button>
-                  <textarea
+                  </Button>
+                  <Textarea
                     id="composer"
                     rows={1}
                     value={composer}
@@ -1019,28 +1108,31 @@ export default function App(): React.JSX.Element {
                     }}
                     placeholder={selected?.status === 'running' ? 'Working on it…' : selected ? `Message ${selected.name} — try “remind me to drink water each min”` : 'Drop a task. Get a hit.'}
                     disabled={selected?.status === 'running'}
-                    className="flex-1 resize-none bg-transparent px-1.5 py-1.5 text-[14px] leading-5 outline-none max-h-[140px]"
+                    className="flex-1 min-h-0 resize-none bg-transparent border-0 shadow-none px-1.5 py-1.5 text-[14px] leading-5 max-h-[140px] focus-visible:ring-0"
                     style={{ color: 'var(--text-primary)' }}
                   />
                   {selected?.status === 'running' ? (
-                    <button
+                    <Button
+                      variant="secondary"
+                      size="icon"
                       onClick={() => void api.abortBot(selected.id)}
-                      className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center pressable"
+                      className="w-8 h-8 shrink-0 rounded-full pressable"
                       style={{ background: 'var(--fill-secondary)', color: 'var(--text-warning)' }}
                       title="Stop"
                     >
                       <StopIcon />
-                    </button>
+                    </Button>
                   ) : (
-                    <button
+                    <Button
+                      size="icon"
                       onClick={() => void send()}
                       disabled={sending || !composer.trim() || boot !== 'online'}
-                      className="w-8 h-8 shrink-0 rounded-full flex items-center justify-center disabled:opacity-30 pressable"
+                      className="w-8 h-8 shrink-0 rounded-full pressable"
                       style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}
                       title="Send"
                     >
                       <SendIcon />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -1087,12 +1179,12 @@ export default function App(): React.JSX.Element {
                     onClose={() => setPanel('none')}
                     action={
                       <div className="flex gap-2">
-                        <button onClick={() => void api.markAllNoticesRead().then(setNotices)} className="text-[11px]" style={{ color: 'var(--text-accent)' }}>
+                        <Button variant="link" onClick={() => void api.markAllNoticesRead().then(setNotices)} className="h-auto p-0 text-[11px]" style={{ color: 'var(--text-accent)' }}>
                           Read all
-                        </button>
-                        <button onClick={() => void api.clearNotices().then(() => setNotices([]))} className="text-[11px]" style={{ color: 'var(--text-danger)' }}>
+                        </Button>
+                        <Button variant="link" onClick={() => void api.clearNotices().then(() => setNotices([]))} className="h-auto p-0 text-[11px]" style={{ color: 'var(--text-danger)' }}>
                           Clear
-                        </button>
+                        </Button>
                       </div>
                     }
                   />
@@ -1138,43 +1230,41 @@ export default function App(): React.JSX.Element {
       </main>
 
       {/* ── Agent editor ───────────────────────────────────────── */}
-      {menu && menuBot && <ContextMenu x={menu.x} y={menu.y} items={menuItemsFor(menuBot)} onClose={() => setMenu(null)} />}
-
-      {editor && selected && (
-        <div className="fixed inset-0 z-30 flex items-center justify-center modal-overlay" style={{ background: '#00000066' }} onClick={() => setEditor(null)}>
-          <div className="w-[440px] rounded-2xl p-4 modal-card" style={{ background: 'var(--bg-elevated)', border: '0.5px solid var(--border)' }} onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-2.5 mb-3">
-              <BlobAvatar hue={selected.hue} size={28} />
-              <h2 className="text-[15px] font-semibold">Edit agent</h2>
-              <button className="ml-auto" style={{ color: 'var(--text-tertiary)' }} onClick={() => setEditor(null)}>
-                ✕
-              </button>
-            </div>
-            <input
+      <Dialog open={Boolean(editor && selected)} onOpenChange={(open) => { if (!open) setEditor(null) }}>
+        {editor && selected && (
+          <DialogContent className="w-[440px] max-w-[calc(100%-2rem)] gap-3">
+            <DialogHeader>
+              <div className="flex items-center gap-2.5">
+                <BlobAvatar hue={selected.hue} size={28} />
+                <DialogTitle>Edit agent</DialogTitle>
+              </div>
+            </DialogHeader>
+            <Input
               value={editor.name}
               onChange={(e) => setEditor({ ...editor, name: e.target.value })}
-              className="w-full rounded-[10px] px-3 py-2 text-[13px] outline-none mb-2"
+              className="w-full h-auto rounded-[10px] px-3 py-2 text-[13px]"
               style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}
               placeholder="Name"
             />
-            <textarea
+            <Textarea
               value={editor.job}
               onChange={(e) => setEditor({ ...editor, job: e.target.value })}
-              className="w-full rounded-[10px] px-3 py-2 text-[13px] outline-none min-h-[88px]"
+              className="w-full rounded-[10px] px-3 py-2 text-[13px] min-h-[88px]"
               style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}
               placeholder="Job"
             />
-            <div className="flex flex-wrap gap-2 mt-3">
-              <button onClick={() => void saveEditor()} className="rounded-full px-3.5 py-1.5 text-[13px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => void saveEditor()} className="h-auto rounded-full px-3.5 py-1.5 text-[13px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
                 Save
-              </button>
-              <button onClick={() => void api.setBotFlags(selected.id, { pinned: !selected.pinned }).then(upsertBot)} className="rounded-full px-3.5 py-1.5 text-[13px]" style={{ background: 'var(--fill-secondary)' }}>
+              </Button>
+              <Button variant="secondary" onClick={() => void api.setBotFlags(selected.id, { pinned: !selected.pinned }).then(upsertBot)} className="h-auto rounded-full px-3.5 py-1.5 text-[13px]" style={{ background: 'var(--fill-secondary)' }}>
                 {selected.pinned ? 'Unpin' : 'Pin'}
-              </button>
-              <button onClick={() => void api.setBotFlags(selected.id, { archived: !selected.archived }).then(upsertBot)} className="rounded-full px-3.5 py-1.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+              </Button>
+              <Button variant="ghost" onClick={() => void api.setBotFlags(selected.id, { archived: !selected.archived }).then(upsertBot)} className="h-auto rounded-full px-3.5 py-1.5 text-[13px]" style={{ color: 'var(--text-secondary)' }}>
                 {selected.archived ? 'Unarchive' : 'Archive'}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={() => {
                   void api.duplicateBot(selected.id).then((b) => {
                     upsertBot(b)
@@ -1182,36 +1272,51 @@ export default function App(): React.JSX.Element {
                     setEditor(null)
                   })
                 }}
-                className="rounded-full px-3.5 py-1.5 text-[13px]"
+                className="h-auto rounded-full px-3.5 py-1.5 text-[13px]"
                 style={{ background: 'var(--fill-secondary)' }}
               >
                 Duplicate
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 onClick={() => {
-                  if (confirm(`Clear chat with ${selected.name}?`)) void api.clearThread(selected.id).then(upsertBot)
+                  void confirmDialog({
+                    title: `Clear chat with ${selected.name}?`,
+                    body: 'This permanently removes the conversation history for this agent.',
+                    confirmLabel: 'Clear chat',
+                  }).then((ok) => {
+                    if (ok) void api.clearThread(selected.id).then(upsertBot)
+                  })
                 }}
-                className="rounded-full px-3.5 py-1.5 text-[13px]"
+                className="h-auto rounded-full px-3.5 py-1.5 text-[13px]"
                 style={{ color: 'var(--text-secondary)' }}
               >
                 Clear chat
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
                 onClick={() => {
-                  if (confirm(`Delete ${selected.name}?`)) {
-                    void api.deleteBot(selected.id)
-                    setEditor(null)
-                  }
+                  void confirmDialog({
+                    title: `Delete ${selected.name}?`,
+                    body: 'This agent and its history will be removed. This cannot be undone.',
+                    confirmLabel: 'Delete',
+                    danger: true,
+                  }).then((ok) => {
+                    if (ok) {
+                      void api.deleteBot(selected.id)
+                      setEditor(null)
+                    }
+                  })
                 }}
-                className="ml-auto rounded-full px-3.5 py-1.5 text-[13px]"
+                className="ml-auto h-auto rounded-full px-3.5 py-1.5 text-[13px]"
                 style={{ color: 'var(--text-danger)' }}
               >
                 Delete agent
-              </button>
+              </Button>
             </div>
-          </div>
-        </div>
-      )}
+          </DialogContent>
+        )}
+      </Dialog>
 
       {!setupReady && (
         <div
@@ -1236,23 +1341,52 @@ export default function App(): React.JSX.Element {
           </div>
 
           <div
-            className="w-full max-w-sm rounded-2xl p-5 space-y-2.5 text-[12.5px] motion-scale"
+            className="w-full max-w-sm rounded-2xl p-5 text-[12.5px] motion-scale"
             style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}
           >
-            <p className="flex items-center gap-1.5">
-              <Check ok={setup !== null && setup.opencode.found} /> OpenCode CLI on PATH
-            </p>
-            <p className="flex items-center gap-1.5 flex-wrap">
-              <Check ok={models.length > 0} /> Model provider configured
-              {!models.length && (
+            <div className="setup-list">
+              <SetupCheckRow
+                label="Local database ready"
+                resolved={setup !== null}
+                delay={0}
+              />
+              <SetupCheckRow
+                label="OpenCode CLI found"
+                resolved={setup !== null}
+                ok={Boolean(setup?.opencode.found)}
+                delay={1}
+              />
+              <SetupCheckRow
+                label="Model provider configured"
+                resolved={setup !== null}
+                ok={models.length > 0}
+                delay={2}
+              />
+              <SetupCheckRow
+                label={`OpenCode server ${boot === 'online' ? 'connected' : boot === 'starting' ? 'starting' : 'offline'}`}
+                resolved={boot !== 'starting'}
+                ok={boot === 'online'}
+                delay={3}
+              />
+            </div>
+
+            {setup !== null && !setup.opencode.found ? (
+              <p className="mt-3.5 text-[11.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                Install the OpenCode CLI, then run{' '}
+                <code className="rounded px-1" style={{ background: 'var(--bg-tertiary)' }}>opencode</code> once to pick a provider.{' '}
                 <a className="underline" style={{ color: 'var(--text-accent)' }} href="https://opencode.ai/docs" target="_blank" rel="noreferrer">
-                  run once and pick a provider
+                  Setup guide
                 </a>
-              )}
-            </p>
-            <p className="flex items-center gap-1.5">
-              <Check ok={boot === 'online'} /> OpenCode server {boot === 'online' ? 'connected' : boot === 'starting' ? 'starting…' : 'offline'}
-            </p>
+              </p>
+            ) : setup !== null && models.length === 0 ? (
+              <p className="mt-3.5 text-[11.5px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                Run{' '}
+                <code className="rounded px-1" style={{ background: 'var(--bg-tertiary)' }}>opencode</code> once in a terminal and choose a provider.{' '}
+                <a className="underline" style={{ color: 'var(--text-accent)' }} href="https://opencode.ai/docs" target="_blank" rel="noreferrer">
+                  Setup guide
+                </a>
+              </p>
+            ) : null}
           </div>
 
           <p className="text-[11px] text-center" style={{ color: 'var(--text-tertiary)' }}>
@@ -1262,6 +1396,8 @@ export default function App(): React.JSX.Element {
       )}
 
       <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} />
+
+      <ConfirmHost />
     </div>
   )
 }

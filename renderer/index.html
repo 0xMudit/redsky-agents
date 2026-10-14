@@ -16,6 +16,17 @@
     <meta property="og:image" content="/favicon.png" />
 
     <meta name="description" content="Grok Bot–style local AI teammates that run entirely on your machine. Powered by OpenCode." />
+
+    <!-- Apply the stored colour mode before first paint so the Notebook theme
+         never flashes the wrong substrate. Mirrors applyMode() in ui.tsx. -->
+    <script>
+      try {
+        var m = localStorage.getItem('redsky.mode')
+        document.documentElement.dataset.mode = m === 'light' || m === 'dark' ? m : 'dark'
+      } catch (e) {
+        document.documentElement.dataset.mode = 'dark'
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
