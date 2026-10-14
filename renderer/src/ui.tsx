@@ -1914,6 +1914,111 @@ export function HistoryPanel({
   )
 }
 
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'] as const
+const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const
+
+function todayIso(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function prettyDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return iso
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  if (d.getTime() === today.getTime()) return 'Today'
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  if (d.getTime() === tomorrow.getTime()) return 'Tomorrow'
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+/** Month grid for a one-off schedule: today and later are selectable, past days disabled. */
+export function Calendar({ value, onSelect }: { value: string; onSelect: (iso: string) => void }): React.JSX.Element {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const [view, setView] = useState(() => {
+    const d = value ? new Date(`${value}T00:00:00`) : new Date()
+    return { y: d.getFullYear(), m: d.getMonth() }
+  })
+
+  const shift = (delta: number): void =>
+    setView((v) => {
+      const d = new Date(v.y, v.m + delta, 1)
+      return { y: d.getFullYear(), m: d.getMonth() }
+    })
+
+  const firstDow = new Date(view.y, view.m, 1).getDay()
+  const daysInMonth = new Date(view.y, view.m + 1, 0).getDate()
+  const cells: Array<number | null> = []
+  for (let i = 0; i < firstDow; i += 1) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d += 1) cells.push(d)
+  const canGoBack = new Date(view.y, view.m, 1).getTime() > new Date(today.getFullYear(), today.getMonth(), 1).getTime()
+  const isoOf = (day: number): string => `${view.y}-${String(view.m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+
+  return (
+    <div className="rounded-[12px] p-2.5" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}>
+      <div className="flex items-center justify-between mb-1.5">
+        <button
+          type="button"
+          onClick={() => shift(-1)}
+          disabled={!canGoBack}
+          aria-label="Previous month"
+          className="w-7 h-7 flex items-center justify-center rounded-lg pressable disabled:opacity-30 disabled:cursor-not-allowed"
+          style={{ color: 'var(--text-secondary)' }}
+        >
+          ‹
+        </button>
+        <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+          {MONTH_NAMES[view.m]} {view.y}
+        </span>
+        <button
+          type="button"
+          onClick={() => shift(1)}
+          aria-label="Next month"
+          className="w-7 h-7 flex items-center justify-center rounded-lg pressable"
+          style={{ color: 'var(--text-secondary)' }}
+        >
+          ›
+        </button>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 text-center">
+        {WEEKDAY_INITIALS.map((w, i) => (
+          <span key={i} className="text-[10px] py-0.5" style={{ color: 'var(--text-tertiary)' }}>
+            {w}
+          </span>
+        ))}
+        {cells.map((day, i) => {
+          if (day == null) return <span key={i} />
+          const date = new Date(view.y, view.m, day)
+          const past = date.getTime() < today.getTime()
+          const selected = isoOf(day) === value
+          const isToday = date.getTime() === today.getTime()
+          return (
+            <button
+              key={i}
+              type="button"
+              disabled={past}
+              onClick={() => onSelect(isoOf(day))}
+              aria-label={isoOf(day)}
+              className="text-[11.5px] rounded-lg py-1.5 pressable disabled:cursor-not-allowed"
+              style={{
+                background: selected ? 'var(--fill-emphasis)' : 'transparent',
+                color: selected ? 'var(--accent-ink)' : past ? 'var(--text-tertiary)' : 'var(--text-secondary)',
+                opacity: past ? 0.4 : 1,
+                border: isToday && !selected ? '0.5px solid var(--border)' : '0.5px solid transparent',
+              }}
+            >
+              {day}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export function RoutinePanel({
   routines,
   bots,
@@ -1931,11 +2036,18 @@ export function RoutinePanel({
   onChange: (r: Routine[]) => void
   onClose?: () => void
 }): React.JSX.Element {
+  const [mode, setMode] = useState<'once' | 'repeat'>('once')
   const [schedule, setSchedule] = useState('every 30 m')
+  const [date, setDate] = useState(todayIso)
+  const [time, setTime] = useState('09:00')
+  const [calOpen, setCalOpen] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [pickedBot, setPickedBot] = useState('')
   const listRef = useRef<HTMLDivElement>(null)
   const botId = pickedBot || selectedId || bots[0]?.id || ''
+  const onceAt = mode === 'once' ? new Date(`${date}T${time}`).getTime() : Number.NaN
+  const onceValid = mode === 'once' ? Number.isFinite(onceAt) && onceAt > Date.now() : true
+  const value = mode === 'once' ? `once ${date} ${time}` : schedule.trim() || 'every 30 m'
 
   useEffect(() => {
     if (!focusId) return
@@ -1945,14 +2057,14 @@ export function RoutinePanel({
 
   const refresh = async () => onChange(await api.listRoutines())
   const add = async () => {
-    if (!botId || !prompt.trim()) return
-    await api.addRoutine({ botId, schedule: schedule.trim() || 'every 30 m', prompt: prompt.trim() })
+    if (!botId || !prompt.trim() || !onceValid) return
+    await api.addRoutine({ botId, schedule: value, prompt: prompt.trim() })
     setPrompt('')
     await refresh()
   }
   const teach = async () => {
-    if (!botId) return
-    await api.teachRoutine({ botId, schedule: schedule.trim() || 'every 30 m' })
+    if (!botId || !onceValid) return
+    await api.teachRoutine({ botId, schedule: value })
     await refresh()
   }
   const toggle = async (r: Routine) => {
@@ -2014,7 +2126,7 @@ export function RoutinePanel({
 
   return (
     <>
-      <PanelHeader title="Schedules" subtitle="Recurring tasks and reminders. Use `every 30 m`, `every 2 h`, or `09:00`." onClose={onClose} />
+      <PanelHeader title="Schedules" subtitle="Pick a date and time, or repeat with `every 30 m`, `every 2 h`, or `09:00`." onClose={onClose} />
       <div className="p-3 grid gap-2" style={{ borderBottom: '0.5px solid var(--border)' }}>
         {bots.length > 1 ? (
           <div className="flex flex-wrap gap-1.5">
@@ -2035,13 +2147,52 @@ export function RoutinePanel({
             })}
           </div>
         ) : null}
-        <Input value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="every 30 m" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <div className="flex gap-0.5 p-0.5 rounded-[10px]" style={{ background: 'var(--bg-tertiary)' }}>
+          <button
+            type="button"
+            onClick={() => setMode('once')}
+            className="flex-1 py-1.5 rounded-[8px] text-[11.5px] pressable"
+            style={{ background: mode === 'once' ? 'var(--fill-emphasis)' : 'transparent', color: mode === 'once' ? 'var(--accent-ink)' : 'var(--text-secondary)' }}
+          >
+            Once
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('repeat')}
+            className="flex-1 py-1.5 rounded-[8px] text-[11.5px] pressable"
+            style={{ background: mode === 'repeat' ? 'var(--fill-emphasis)' : 'transparent', color: mode === 'repeat' ? 'var(--accent-ink)' : 'var(--text-secondary)' }}
+          >
+            Repeat
+          </button>
+        </div>
+        {mode === 'once' ? (
+          <div className="grid gap-2">
+            <button
+              type="button"
+              onClick={() => setCalOpen((o) => !o)}
+              className="flex items-center gap-2 rounded-[10px] px-2.5 py-2 text-[12px] pressable"
+              style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}
+            >
+              <IonIcon name="calendar-outline" size={14} />
+              <span>{prettyDay(date)}</span>
+              <IonIcon name={calOpen ? 'chevron-up-outline' : 'chevron-down-outline'} size={13} className="ml-auto" />
+            </button>
+            {calOpen ? <Calendar value={date} onSelect={(d) => { setDate(d); setCalOpen(false) }} /> : null}
+            <label className="flex items-center gap-2 rounded-[10px] px-2.5 py-2" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }}>
+              <IonIcon name="time-outline" size={14} style={{ color: 'var(--text-tertiary)' }} />
+              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="flex-1 bg-transparent outline-none text-[12px]" style={{ color: 'var(--text-secondary)' }} />
+            </label>
+            {!onceValid ? <p className="text-[10.5px]" style={{ color: 'var(--text-danger)' }}>Pick a date and time in the future.</p> : null}
+          </div>
+        ) : (
+          <Input value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="every 30 m · every 2 h · 09:00" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        )}
         <Input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="what to run or remind" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
         <div className="grid grid-cols-2 gap-2">
-          <Button onClick={() => void add()} disabled={!prompt.trim() || !botId} className="h-auto rounded-[10px] py-2 text-[12px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
-            Schedule
+          <Button onClick={() => void add()} disabled={!prompt.trim() || !botId || !onceValid} className="h-auto rounded-[10px] py-2 text-[12px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+            {mode === 'once' ? `Schedule for ${prettyDay(date)}` : 'Schedule'}
           </Button>
-          <Button variant="outline" onClick={() => void teach()} disabled={!botId} className="h-auto rounded-[10px] py-2 text-[12px]" style={{ color: 'var(--text-accent)', background: 'var(--bg-card)' }}>
+          <Button variant="outline" onClick={() => void teach()} disabled={!botId || !onceValid} className="h-auto rounded-[10px] py-2 text-[12px]" style={{ color: 'var(--text-accent)', background: 'var(--bg-card)' }}>
             Teach last task
           </Button>
         </div>

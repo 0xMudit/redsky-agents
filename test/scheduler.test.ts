@@ -39,6 +39,23 @@ describe('nextDelayMs', () => {
     assert.equal(nextDelayMs('09:00', late), 10 * HOUR)
   })
 
+  it('resolves a one-off date and time against a fixed instant', () => {
+    const base = new Date(2026, 0, 1, 8, 0, 0, 0).getTime()
+    assert.equal(nextDelayMs('once 2026-01-01 09:00', base), HOUR)
+    assert.equal(nextDelayMs('once 2026-01-02 08:00', base), 24 * HOUR)
+    // A date without a time defaults to 09:00.
+    assert.equal(nextDelayMs('once 2026-01-01', base), HOUR)
+    assert.equal(nextDelayMs('ONCE 2026-01-01 10:00', base), 2 * HOUR)
+  })
+
+  it('rejects a one-off in the past or on an impossible day', () => {
+    const base = new Date(2026, 0, 1, 8, 0, 0, 0).getTime()
+    assert.equal(nextDelayMs('once 2025-12-31 09:00', base), null)
+    assert.equal(nextDelayMs('once 2026-01-01 07:00', base), null)
+    assert.equal(nextDelayMs('once 2026-02-30 09:00', base), null)
+    assert.equal(nextDelayMs('once 2026-13-01 09:00', base), null)
+  })
+
   it('rejects anything it cannot honor', () => {
     for (const bad of [
       '',
@@ -52,6 +69,9 @@ describe('nextDelayMs', () => {
       '25:00',
       '09:99',
       '24:00',
+      'once',
+      'once 09:00',
+      'once 2026-01-01 25:00',
     ]) {
       assert.equal(nextDelayMs(bad), null, `expected null for ${JSON.stringify(bad)}`)
     }
@@ -254,6 +274,34 @@ describe('createScheduler', () => {
       await drainMicrotasks()
 
       assert.equal(fired.length, 0)
+    } finally {
+      t.mock.timers.reset()
+    }
+  })
+
+  it('fires a one-off once, then disables it instead of re-arming', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] })
+    try {
+      const fired: CronRow[] = []
+      const s = scheduler((row) => {
+        fired.push(row)
+      })
+      const at = new Date(Date.now() + 2 * MINUTE)
+      const iso = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`
+      const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+      const row = s.add('bot_1', `once ${iso} ${hhmm}`, 'ship the release')
+      assert.equal(row.enabled, true)
+
+      t.mock.timers.tick(3 * MINUTE)
+      await drainMicrotasks()
+
+      assert.equal(fired.length, 1)
+      assert.equal(s.rows()[0].enabled, false)
+
+      // Spent one-offs stay silent.
+      t.mock.timers.tick(10 * MINUTE)
+      await drainMicrotasks()
+      assert.equal(fired.length, 1)
     } finally {
       t.mock.timers.reset()
     }
