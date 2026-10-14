@@ -170,6 +170,74 @@ describe('agent — streaming and session.idle', () => {
     assert.match(reply.text, /Hello world!/)
   })
 
+  it('ignores the echoed user prompt when the server replays its own parts', async () => {
+    const bot = await agent.createBot({ name: 'Echo' })
+    const prompt = 'Hello, tell me top 5 programming language'
+    await agent.send(bot.id, { text: prompt })
+
+    // OpenCode publishes the user's own message and text part back over the bus.
+    serverEvents.emit('event', {
+      type: 'message.updated',
+      properties: { sessionID: bot.sessionId, info: { id: 'msg_user_1', sessionID: bot.sessionId, role: 'user' } },
+    })
+    serverEvents.emit('event', {
+      type: 'message.part.updated',
+      properties: {
+        sessionID: bot.sessionId,
+        part: { id: 'prt_user_1', messageID: 'msg_user_1', sessionID: bot.sessionId, type: 'text', text: prompt },
+      },
+    })
+
+    // The agent then starts answering.
+    serverEvents.emit('event', {
+      type: 'message.updated',
+      properties: { sessionID: bot.sessionId, info: { id: 'msg_a_1', sessionID: bot.sessionId, role: 'assistant' } },
+    })
+    serverEvents.emit('event', {
+      type: 'message.part.delta',
+      properties: { sessionID: bot.sessionId, messageID: 'msg_a_1', partID: 'prt_a_1', field: 'text', delta: 'Python, JavaScript, Go, Rust, TypeScript.' },
+    })
+    serverEvents.emit('event', { type: 'session.idle', properties: { sessionID: bot.sessionId } })
+
+    const done = await waitForBot(agent, (b) => b.id === bot.id && b.status === 'idle')
+    const assistant = done.thread.filter((m) => m.role === 'assistant')
+    assert.equal(assistant.length, 1, 'the echoed prompt must not create an assistant message')
+    assert.match(assistant[0].text, /Python, JavaScript/)
+    assert.doesNotMatch(assistant[0].text, /Hello, tell me/)
+
+    const users = done.thread.filter((m) => m.role === 'user')
+    assert.equal(users.length, 1)
+    assert.equal(users[0].text, prompt)
+  })
+
+  it('does not fold reasoning-part deltas into the visible reply', async () => {
+    const bot = await agent.createBot({ name: 'Thinker' })
+    await agent.send(bot.id, { text: 'solve it' })
+
+    serverEvents.emit('event', {
+      type: 'message.part.updated',
+      properties: {
+        sessionID: bot.sessionId,
+        part: { id: 'prt_reason', messageID: 'msg_a', sessionID: bot.sessionId, type: 'reasoning', text: '' },
+      },
+    })
+    serverEvents.emit('event', {
+      type: 'message.part.delta',
+      properties: { sessionID: bot.sessionId, messageID: 'msg_a', partID: 'prt_reason', field: 'text', delta: 'secret chain of thought' },
+    })
+    serverEvents.emit('event', {
+      type: 'message.part.delta',
+      properties: { sessionID: bot.sessionId, messageID: 'msg_a', partID: 'prt_answer', field: 'text', delta: 'The answer is 42.' },
+    })
+    serverEvents.emit('event', { type: 'session.idle', properties: { sessionID: bot.sessionId } })
+
+    const done = await waitForBot(agent, (b) => b.id === bot.id && b.status === 'idle')
+    const assistant = done.thread.filter((m) => m.role === 'assistant')
+    assert.equal(assistant.length, 1)
+    assert.equal(assistant[0].text, 'The answer is 42.')
+    assert.doesNotMatch(assistant[0].text, /secret chain of thought/)
+  })
+
   it('session.idle sets status to idle and computes runDiff', async () => {
     const bot = await agent.createBot({ name: 'Idler' })
     await agent.send(bot.id, { text: 'finish fast' })

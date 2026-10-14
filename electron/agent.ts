@@ -144,6 +144,14 @@ export function createAgent(deps: AgentDeps): AgentHandle {
   const partText = new Map<string, Map<string, string>>()
   const flushTimer = new Map<string, ReturnType<typeof setTimeout>>()
   const hydrateTimer = new Map<string, ReturnType<typeof setTimeout>>()
+  // OpenCode publishes part events for the user's own prompt too, so remember
+  // which message ids are the user's and never fold that echo back in as the
+  // agent's reply. Reasoning parts stream the same way as visible text, so their
+  // part ids are remembered to keep chain-of-thought out of the thread. Both are
+  // keyed by bot id and pruned so they stay bounded.
+  const userMessages = new Map<string, Set<string>>()
+  const thinkingParts = new Map<string, Set<string>>()
+  const MAX_TRACKED_IDS = 200
   const queued = new Map<string, { text: string; model?: ModelRef; roomId?: string }>()
   const snaps = new Map<string, FileSnap[]>()
   // The turn id of the user message currently being answered, so the prompt's
@@ -437,13 +445,45 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     events.emit('event', { source: 'teach', botId: bot.id, prompt })
   }
 
+  // Bounded id sets so per-bot bookkeeping cannot grow without limit.
+  function trackId(bucket: Map<string, Set<string>>, botId: string, id: string): void {
+    if (!id) return
+    const set = bucket.get(botId) ?? new Set<string>()
+    set.add(id)
+    if (set.size > MAX_TRACKED_IDS) {
+      const oldest = set.values().next().value
+      if (oldest !== undefined) set.delete(oldest)
+    }
+    bucket.set(botId, set)
+  }
+
+  function hasId(bucket: Map<string, Set<string>>, botId: string, id: string): boolean {
+    return Boolean(id) && (bucket.get(botId)?.has(id) ?? false)
+  }
+
+  function forgetBot(botId: string): void {
+    userMessages.delete(botId)
+    thinkingParts.delete(botId)
+  }
+
   function handleBusEvent(bot: BotRecord, evt: { type: string; properties?: Record<string, unknown>; data?: unknown }): void {
     const props = (evt.properties ?? {}) as Record<string, unknown>
     switch (evt.type) {
+      case 'message.updated': {
+        // Remember the user's message ids so their echoed parts are ignored.
+        const info = (props.info ?? props.message ?? {}) as Record<string, unknown>
+        if (info.role === 'user') trackId(userMessages, bot.id, String(info.id ?? ''))
+        break
+      }
       case 'message.part.updated': {
         const part = props.part as Record<string, unknown> | undefined
         if (!part) return
-        if (partLooksLikeThinking(part)) return
+        // The user's own prompt is echoed back as a part; never show it as the reply.
+        if (hasId(userMessages, bot.id, String(part.messageID ?? ''))) return
+        if (partLooksLikeThinking(part)) {
+          trackId(thinkingParts, bot.id, String(part.id ?? ''))
+          return
+        }
         if (part.type === 'text' && part.id) {
           const run = partText.get(bot.id) ?? new Map<string, string>()
           run.set(String(part.id), String(part.text ?? ''))
@@ -468,6 +508,9 @@ export function createAgent(deps: AgentDeps): AgentHandle {
         const partID = String(props.partID ?? '')
         const delta = String(props.delta ?? '')
         if (!partID || !delta) return
+        // Ignore the echoed user prompt and hidden reasoning streams.
+        if (hasId(userMessages, bot.id, String(props.messageID ?? ''))) return
+        if (hasId(thinkingParts, bot.id, partID)) return
         const run = partText.get(bot.id) ?? new Map<string, string>()
         run.set(partID, (run.get(partID) ?? '') + delta)
         partText.set(bot.id, run)
@@ -906,6 +949,7 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     const bot = store.get(botId)
     store.delete(botId)
     partText.delete(botId)
+    forgetBot(botId)
     queued.delete(botId)
     pendingTurn.delete(botId)
     if (bot?.sessionId) {
