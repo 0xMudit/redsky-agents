@@ -47,11 +47,15 @@ export function parseReminder(text: string): ParsedReminder | null {
 
   let task = raw
     .replace(/^(please\s+)?keep\s+/i, '')
-    .replace(/^(please\s+)?remind(er|ing)?\s+(me\s+)?(to\s+)?/i, '')
+    .replace(/^(please\s+)?remind(er|ing)?\s+(me\b)?\s*[:=>~\-–—]*\s*(to\b)?/i, '')
     .replace(/\b(every|each)\s+(\d+\s*)?(min(?:ute)?s?|m|hours?|hrs?|h)\b/gi, '')
     .replace(/\bat\s+\d{1,2}(?::\d{2})?(?:\s*(am|pm))?\b/gi, '')
     .replace(/\bso i wanna.*$/i, '')
     .replace(/[.,!]+$/g, '')
+    .trim()
+    .replace(/^[\s=:>~\-–—]+/, '')
+    .replace(/\s+(?:in|at|on|by|for|to|each|every)\s*$/i, '')
+    .replace(/^[\s=:>~\-–—]+/, '')
     .replace(/\s+/g, ' ')
     .trim()
   if (!task || task.length < 2) task = 'this'

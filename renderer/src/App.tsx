@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
-import { stripThinking, timeLabel } from './format'
+import { scheduleLabel, stripThinking, timeLabel } from './format'
 import type { AppNotice, Bot, Connector, EventEnvelope, FileNode, HistoryTurn, JobTemplate, MemoryRow, ModelOption, Note, NoteHit, Room, Routine, SearchHit, SetupCheck } from './types'
 import {
   ActivityIcon,
@@ -67,6 +67,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ConfirmHost, alertDialog, confirmDialog } from '@/components/ui/confirm'
+import { Toaster, toast } from '@/components/ui/toast'
+import { playReminderSound, preloadReminderSound } from './lib/sound'
 
 type Boot = 'starting' | 'online' | 'offline'
 type Panel = 'none' | 'activity' | 'notices' | 'rooms' | 'memory' | 'notes' | 'history' | 'routines' | 'connectors' | 'settings'
@@ -198,8 +200,10 @@ export default function App(): React.JSX.Element {
   const [memories, setMemories] = useState<MemoryRow[]>([])
   const [history, setHistory] = useState<HistoryTurn[]>([])
   const [routines, setRoutines] = useState<Routine[]>([])
+  const [routineFocus, setRoutineFocus] = useState<{ id: string; nonce: number } | null>(null)
   const [rooms, setRooms] = useState<Room[]>([])
   const [notes, setNotes] = useState<Note[]>([])
+  const [noteFocus, setNoteFocus] = useState<{ id: string; nonce: number } | null>(null)
   const [capture, setCapture] = useState<string | null>(null)
   const [captureQuery, setCaptureQuery] = useState('')
   const [captureHits, setCaptureHits] = useState<NoteHit[]>([])
@@ -238,6 +242,7 @@ export default function App(): React.JSX.Element {
   const stickRef = useRef(true)
   const selectedIdRef = useRef<string | null>(null)
   const lastPanelRef = useRef<Exclude<Panel, 'none'>>('activity')
+  const openSchedulesRef = useRef<() => void>(() => {})
 
   const upsertBot = useCallback((bot: Bot) => {
     setBots((prev) => {
@@ -250,6 +255,10 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     selectedIdRef.current = selectedId
   }, [selectedId])
+
+  useEffect(() => {
+    preloadReminderSound()
+  }, [])
 
   useEffect(() => {
     applyTheme(theme)
@@ -320,7 +329,19 @@ export default function App(): React.JSX.Element {
           return next
         })
       }
-      if (evt.source === 'notice') setNotices((prev) => [evt.notice, ...prev.filter((n) => n.id !== evt.notice.id)].slice(0, 80))
+      if (evt.source === 'notice') {
+        setNotices((prev) => [evt.notice, ...prev.filter((n) => n.id !== evt.notice.id)].slice(0, 80))
+        if (evt.notice.kind === 'reminder') {
+          playReminderSound()
+          toast({
+            id: `reminder-${evt.notice.id}`,
+            variant: 'reminder',
+            title: evt.notice.title,
+            description: evt.notice.body,
+            action: { label: 'View schedules', onClick: () => openSchedulesRef.current() },
+          })
+        }
+      }
       if (evt.source === 'notices') setNotices(evt.notices)
       if (evt.source === 'connectors') setConnectors(evt.connectors)
       if (evt.source === 'rooms') setRooms(evt.rooms)
@@ -764,6 +785,7 @@ export default function App(): React.JSX.Element {
     selected && ((selected.runDiff && (selected.runDiff.added.length || selected.runDiff.changed.length || selected.runDiff.removed.length)) || selected.artifacts?.length),
   )
   const openPanel = useCallback((p: Panel) => setPanel((cur) => (cur === p ? 'none' : p)), [])
+  openSchedulesRef.current = () => setPanel('routines')
 
   const openNoteCapture = useCallback((text: string) => {
     setCapture(text.trim())
@@ -825,6 +847,21 @@ export default function App(): React.JSX.Element {
     templates.forEach((t) =>
       list.push({ id: `tpl-${t.name}`, group: 'Templates', label: t.name, keywords: t.job, icon: <SparkIcon />, run: () => void newAgent(t) }),
     )
+    routines.forEach((r) => {
+      const bot = bots.find((b) => b.id === r.botId)
+      list.push({
+        id: `routine-${r.id}`,
+        group: 'Schedules',
+        label: r.prompt,
+        hint: `${scheduleLabel(r.schedule)}${r.enabled ? '' : ' · paused'}`,
+        keywords: `reminder routine schedule ${r.schedule} recurring cron ${r.origin ?? ''} ${bot?.name ?? ''}`,
+        icon: <RoutineIcon />,
+        run: () => {
+          setRoutineFocus({ id: r.id, nonce: Date.now() })
+          setPanel('routines')
+        },
+      })
+    })
     THEMES.forEach((t) =>
       list.push({ id: `theme-${t.name}`, group: 'Accent', label: `${t.label}`, hint: theme === t.name ? 'active' : undefined, keywords: 'theme color palette vibe', icon: <PaletteIcon />, run: () => setTheme(t.name) }),
     )
@@ -832,7 +869,7 @@ export default function App(): React.JSX.Element {
       list.push({ id: `mode-${m}`, group: 'Appearance', label: `${m === 'dark' ? 'Dark' : 'Light'} mode`, hint: mode === m ? 'active' : undefined, keywords: 'theme dark light appearance mode', icon: <ModeIcon />, run: () => setMode(m) }),
     )
     return list
-  }, [modKey, newAgent, openPanel, selected, openBot, send, visible, templates, theme, mode])
+  }, [modKey, newAgent, openPanel, selected, openBot, send, visible, templates, theme, mode, routines, bots])
 
   // ── First-run blocking screen ──────────────────────────────────────────────
   if (cliMissing) {
@@ -961,6 +998,37 @@ export default function App(): React.JSX.Element {
           {groups.recent.map((b, i) => renderBotRow(b, groups.pinned.length + i))}
           {groups.archived.length > 0 ? <SidebarSection label="Archived" /> : null}
           {groups.archived.map((b, i) => renderBotRow(b, groups.pinned.length + groups.recent.length + i))}
+          {!search.trim() && rooms.length > 0 ? <SidebarSection label="Rooms" /> : null}
+          {!search.trim() &&
+            rooms.map((r) => {
+              const members = r.participantIds.map((id) => bots.find((b) => b.id === id)).filter(Boolean) as Bot[]
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => openPanel('rooms')}
+                  title={members.map((m) => m.name).join(', ') || 'No agents'}
+                  className="w-full text-left rounded-[8px] px-2.5 py-1.5 mb-0.5 hover:bg-[var(--sidebar-hover)] pressable"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="flex -space-x-1.5 shrink-0">
+                      {members.slice(0, 3).map((m) => (
+                        <BlobAvatar key={m.id} hue={m.hue} size={16} />
+                      ))}
+                      {!members.length ? <IonIcon name="people-outline" size={15} style={{ color: 'var(--sidebar-muted)' }} /> : null}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[12px] truncate" style={{ color: 'var(--sidebar-text)' }}>
+                        {r.title}
+                      </span>
+                      <span className="block text-[10.5px] truncate" style={{ color: 'var(--sidebar-muted)' }}>
+                        {members.length ? members.map((m) => m.name).join(', ') : 'No agents'}
+                        {members.length > 3 ? ` +${members.length - 3}` : ''}
+                      </span>
+                    </span>
+                  </span>
+                </button>
+              )
+            })}
           {!bots.length && (
             <p className="px-3 py-6 text-[12px] leading-relaxed" style={{ color: 'var(--sidebar-faint)' }}>
               Create an agent, give it a job, get a hit of finished work.
@@ -1424,9 +1492,9 @@ export default function App(): React.JSX.Element {
               )}
               {activePanel === 'rooms' && <RoomsPanel rooms={rooms} bots={bots} onChange={setRooms} onClose={() => setPanel('none')} />}
               {activePanel === 'memory' && <MemoryPanel memories={memories} botId={selected?.id} onChange={setMemories} onClose={() => setPanel('none')} />}
-              {activePanel === 'notes' && <NotesPanel notes={notes} onChange={setNotes} onClose={() => setPanel('none')} />}
+              {activePanel === 'notes' && <NotesPanel notes={notes} onChange={setNotes} openNote={noteFocus} onClose={() => setPanel('none')} />}
               {activePanel === 'history' && <HistoryPanel history={history} onOpen={(id) => { void openBot(id); setPanel('none') }} onClose={() => setPanel('none')} />}
-              {activePanel === 'routines' && <RoutinePanel routines={routines} bots={bots} selectedId={selected?.id} onChange={setRoutines} onClose={() => setPanel('none')} />}
+              {activePanel === 'routines' && <RoutinePanel routines={routines} bots={bots} selectedId={selected?.id} focusId={routineFocus?.id} focusNonce={routineFocus?.nonce} onChange={setRoutines} onClose={() => setPanel('none')} />}
               {activePanel === 'connectors' && <ConnectorsPanel connectors={connectors} onChange={setConnectors} onClose={() => setPanel('none')} />}
               {activePanel === 'settings' && settings && <SettingsPanel settings={settings} theme={theme} base={base} mode={mode} scale={scale} models={models} model={model} onChange={setSettings} onTheme={setTheme} onBase={setBase} onMode={setMode} onScale={setScale} onModel={setModel} onClose={() => setPanel('none')} />}
             </div>
@@ -1551,11 +1619,11 @@ export default function App(): React.JSX.Element {
               onClick={() => {
                 void api
                   .createNote({ title: '', body: capture ?? '', source: 'selection', botId: selected?.id })
-                  .then(() => api.listNotes())
-                  .then((list) => {
-                    setNotes(list)
-                    setCapture(null)
+                  .then(async (note) => {
+                    setNotes(await api.listNotes())
                     setPanel('notes')
+                    setNoteFocus((prev) => ({ id: note.id, nonce: (prev?.nonce ?? 0) + 1 }))
+                    setCapture(null)
                   })
               }}
               className="w-full text-left rounded-[10px] px-3 py-2 text-[13px] font-medium pressable hover:bg-[var(--bg-hover)]"
@@ -1573,9 +1641,10 @@ export default function App(): React.JSX.Element {
                   onClick={() => {
                     void api
                       .appendToNote(id, capture ?? '')
-                      .then(() => api.listNotes())
-                      .then((list) => {
-                        setNotes(list)
+                      .then(async () => {
+                        setNotes(await api.listNotes())
+                        setPanel('notes')
+                        setNoteFocus((prev) => ({ id, nonce: (prev?.nonce ?? 0) + 1 }))
                         setCapture(null)
                       })
                   }}
@@ -1683,6 +1752,7 @@ export default function App(): React.JSX.Element {
       <SearchPalette open={searchOpen} onClose={() => setSearchOpen(false)} search={runGlobalSearch} />
 
       <ConfirmHost />
+      <Toaster />
     </div>
   )
 }

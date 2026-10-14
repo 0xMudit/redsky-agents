@@ -60,6 +60,14 @@ describe('parseReminder', () => {
     })
   })
 
+  it('cleans separators and dangling connectives from the task', () => {
+    assert.deepEqual(parseReminder('remind me = drink water in every 1 min'), {
+      schedule: 'every 1 m',
+      task: 'drink water',
+    })
+    assert.deepEqual(parseReminder('remind me: call mom at 9am'), { schedule: '09:00', task: 'call mom' })
+  })
+
   it('falls back to a placeholder when no task was given', () => {
     assert.deepEqual(parseReminder('remind me at 7am'), { schedule: '07:00', task: 'this' })
   })

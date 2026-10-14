@@ -113,7 +113,9 @@ function pushNotice(bot: Bot, kind: NoticeKind, title: string, body: string, alw
   broadcast({ source: 'notice', notice })
   const focused = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())
   if ((alwaysOs || !focused) && Notification.isSupported()) {
-    new Notification({ title, body: body.slice(0, 180) }).show()
+    // Reminders carry their own chime in the renderer, so keep the OS banner
+    // silent to avoid a doubled sound.
+    new Notification({ title, body: body.slice(0, 180), silent: kind === 'reminder' }).show()
   }
 }
 
@@ -504,13 +506,29 @@ function wireIpc(): void {
   ipcMain.handle('rs:createRoom', async (_e, payload: { title?: string; participantIds: string[] }) => {
     if (!payload?.participantIds?.length) throw new Error('pick at least one bot')
     const room = rooms().create(payload.title ?? 'Thread', payload.participantIds)
-    for (const id of payload.participantIds) requireAgent().attachRoom(id, room.id)
+    // Linking the agents is best-effort: the room is already durable, so a
+    // not-yet-ready agent must not fail the whole call.
+    if (agent) {
+      for (const id of payload.participantIds) {
+        try {
+          agent.attachRoom(id, room.id)
+        } catch {
+          /* agent not ready — the room still exists */
+        }
+      }
+    }
     broadcast({ source: 'rooms', rooms: rooms().list() })
     return room
   })
   ipcMain.handle('rs:addToRoom', async (_e, roomId: string, botId: string) => {
     const room = rooms().addParticipant(roomId, botId)
-    requireAgent().attachRoom(botId, room.id)
+    if (agent) {
+      try {
+        agent.attachRoom(botId, room.id)
+      } catch {
+        /* best-effort */
+      }
+    }
     broadcast({ source: 'rooms', rooms: rooms().list() })
     return room
   })

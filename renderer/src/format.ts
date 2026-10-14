@@ -113,4 +113,60 @@ export function dateLabel(ts: number): string {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+/** Human wording for a routine schedule: `every 1 m` → `every minute`, `09:00` → `daily at 09:00`. */
+export function scheduleLabel(schedule: string): string {
+  const s = schedule.trim().toLowerCase()
+  const every = s.match(/^every\s+(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours)$/)
+  if (every) {
+    const n = Number(every[1])
+    const hours = every[2].startsWith('h')
+    if (!hours && n === 1) return 'every minute'
+    return `every ${n} ${hours ? (n === 1 ? 'hour' : 'hours') : n === 1 ? 'minute' : 'minutes'}`
+  }
+  const daily = s.match(/^(?:daily\s+)?(\d{1,2}):(\d{2})$/)
+  if (daily) return `daily at ${daily[1].padStart(2, '0')}:${daily[2]}`
+  const once = s.match(/^once\s+(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{1,2}):(\d{2}))?$/)
+  if (once) {
+    const d = new Date(Number(once[1]), Number(once[2]) - 1, Number(once[3]), Number(once[4] ?? 9), Number(once[5] ?? 0))
+    const day = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    return `once on ${day} at ${time}`
+  }
+  return schedule
+}
+
+/** A rough "in ~N min" label for when a routine fires next, or '' if unknown. */
+export function nextRunLabel(schedule: string, from = Date.now()): string {
+  const s = schedule.trim().toLowerCase()
+  const every = s.match(/^every\s+(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours)$/)
+  if (every) {
+    const n = Number(every[1])
+    const mins = every[2].startsWith('h') ? n * 60 : n
+    if (mins <= 0) return ''
+    return mins >= 60 ? `in ~${Math.round(mins / 60)} h` : `in ~${mins} min`
+  }
+  const daily = s.match(/^(?:daily\s+)?(\d{1,2}):(\d{2})$/)
+  if (daily) {
+    const h = Number(daily[1])
+    const m = Number(daily[2])
+    if (h > 23 || m > 59) return ''
+    const d = new Date(from)
+    d.setSeconds(0, 0)
+    d.setHours(h, m, 0, 0)
+    if (d.getTime() <= from) d.setDate(d.getDate() + 1)
+    const mins = Math.round((d.getTime() - from) / 60000)
+    return mins >= 60 ? `in ~${Math.round(mins / 60)} h` : `in ${mins} min`
+  }
+  const once = s.match(/^once\s+(\d{4})-(\d{2})-(\d{2})(?:\s+(\d{1,2}):(\d{2}))?$/)
+  if (once) {
+    const d = new Date(Number(once[1]), Number(once[2]) - 1, Number(once[3]), Number(once[4] ?? 9), Number(once[5] ?? 0))
+    const mins = Math.round((d.getTime() - from) / 60000)
+    if (mins <= 0) return 'due now'
+    if (mins < 60) return `in ${mins} min`
+    if (mins < 60 * 24) return `in ~${Math.round(mins / 60)} h`
+    return `on ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`
+  }
+  return ''
+}
+
 export { stripThinking }

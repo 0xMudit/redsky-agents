@@ -6,6 +6,14 @@ import type { Routine } from '../shared/types'
 
 export type CronRow = Routine
 
+/** setTimeout stores its delay in a signed 32-bit int; longer waits must be chunked. */
+const MAX_TIMEOUT = 2_147_483_647
+
+/** One-off schedules fire once at a fixed date/time, then disable themselves. */
+export function isOneOff(schedule: string): boolean {
+  return /^once\s+/i.test(schedule.trim())
+}
+
 export interface SchedulerHandle {
   rows: () => CronRow[]
   add: (botId: string, schedule: string, prompt: string, origin?: Routine['origin']) => CronRow
@@ -36,6 +44,20 @@ export function nextDelayMs(schedule: string, from = Date.now()): number | null 
     if (d.getTime() <= from) d.setDate(d.getDate() + 1)
     return d.getTime() - from
   }
+  const once = s.match(/^once\s+(\d{4})-(\d{2})-(\d{2})(?:[ t](\d{1,2}):(\d{2}))?$/)
+  if (once) {
+    const year = Number(once[1])
+    const month = Number(once[2])
+    const day = Number(once[3])
+    const hour = once[4] != null ? Number(once[4]) : 9
+    const min = once[5] != null ? Number(once[5]) : 0
+    if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || min > 59) return null
+    const when = new Date(year, month - 1, day, hour, min, 0, 0)
+    // A day that rolls over (e.g. Feb 30) is not a real date.
+    if (when.getFullYear() !== year || when.getMonth() !== month - 1 || when.getDate() !== day) return null
+    const delay = when.getTime() - from
+    return delay > 0 ? delay : null
+  }
   return null
 }
 
@@ -58,11 +80,18 @@ export function createScheduler(onFire: (row: CronRow) => void | Promise<void>):
     if (!row.enabled) return
     const delay = nextDelayMs(row.schedule)
     if (delay == null) return
+    // A one-off far in the future exceeds setTimeout's range; re-arm in chunks.
+    const wait = Math.min(delay, MAX_TIMEOUT)
     timers.set(
       row.id,
       setTimeout(() => {
         const live = rows.find((r) => r.id === row.id)
         if (!live?.enabled) return
+        // Long one-off: not at the target instant yet, come back later.
+        if (wait < delay) {
+          arm(live)
+          return
+        }
         if (inFlight.has(live.id)) {
           arm(live)
           return
@@ -74,9 +103,15 @@ export function createScheduler(onFire: (row: CronRow) => void | Promise<void>):
           .catch(() => undefined)
           .finally(() => {
             inFlight.delete(live.id)
-            arm(live)
+            // A one-off is spent once it fires; everything else re-arms.
+            if (isOneOff(live.schedule)) {
+              live.enabled = false
+              persist()
+            } else {
+              arm(live)
+            }
           })
-      }, delay),
+      }, wait),
     )
   }
 
@@ -85,7 +120,7 @@ export function createScheduler(onFire: (row: CronRow) => void | Promise<void>):
   return {
     rows: () => rows.map((r) => ({ ...r })),
     add(botId, schedule, prompt, origin = 'manual') {
-      if (nextDelayMs(schedule) == null) throw new Error('unrecognized schedule — use `every 30 m`, `every 2 h`, or `09:00`')
+      if (nextDelayMs(schedule) == null) throw new Error('unrecognized schedule — use `every 30 m`, `every 2 h`, `09:00`, or `once 2026-01-31 09:00`')
       if (origin === 'reminder') {
         const same = rows.filter((r) => r.botId === botId && r.origin === 'reminder' && r.prompt.toLowerCase() === prompt.trim().toLowerCase())
         for (const r of same) {

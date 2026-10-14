@@ -20,7 +20,7 @@ import {
 } from 'ionicons/icons'
 import { api } from './api'
 import { confirmDialog } from '@/components/ui/confirm'
-import { dateLabel, renderMarkdown, timeLabel } from './format'
+import { dateLabel, nextRunLabel, renderMarkdown, scheduleLabel, timeLabel } from './format'
 import type {
   AppSettings,
   Bot,
@@ -1596,10 +1596,13 @@ export function NotesPanel({
   notes,
   onChange,
   onClose,
+  openNote,
 }: {
   notes: Note[]
   onChange: (n: Note[]) => void
   onClose?: () => void
+  /** Open this note on request (e.g. right after a reply is captured into it). */
+  openNote?: { id: string; nonce: number } | null
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<NoteHit[] | null>(null)
@@ -1609,6 +1612,20 @@ export function NotesPanel({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const editing = editingId ? notes.find((n) => n.id === editingId) ?? null : null
+
+  // Open a note on request — after a reply is captured into it — so the change
+  // shows immediately instead of only once the note is reopened. Guarded by a
+  // nonce so re-renders from autosave don't re-seed the draft mid-typing.
+  const focusRef = useRef(0)
+  useEffect(() => {
+    if (!openNote || openNote.nonce === focusRef.current) return
+    const note = notes.find((n) => n.id === openNote.id)
+    if (!note) return
+    focusRef.current = openNote.nonce
+    setEditingId(note.id)
+    setDraft({ title: note.title, body: note.body, tags: note.tags.join(', ') })
+    setPreview(false)
+  }, [openNote, notes])
 
   // Full-text search when a query is present; otherwise the recency-ordered list.
   useEffect(() => {
@@ -1901,89 +1918,156 @@ export function RoutinePanel({
   routines,
   bots,
   selectedId,
+  focusId,
+  focusNonce,
   onChange,
   onClose,
 }: {
   routines: Routine[]
   bots: Bot[]
   selectedId?: string
+  focusId?: string
+  focusNonce?: number
   onChange: (r: Routine[]) => void
   onClose?: () => void
 }): React.JSX.Element {
-  const [schedule, setSchedule] = useState('every 60 m')
+  const [schedule, setSchedule] = useState('every 30 m')
   const [prompt, setPrompt] = useState('')
-  const botId = selectedId ?? bots[0]?.id ?? ''
+  const [pickedBot, setPickedBot] = useState('')
+  const listRef = useRef<HTMLDivElement>(null)
+  const botId = pickedBot || selectedId || bots[0]?.id || ''
+
+  useEffect(() => {
+    if (!focusId) return
+    const el = listRef.current?.querySelector(`[data-routine="${focusId}"]`)
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [focusId, focusNonce])
+
+  const refresh = async () => onChange(await api.listRoutines())
   const add = async () => {
     if (!botId || !prompt.trim()) return
-    await api.addRoutine({ botId, schedule, prompt: prompt.trim() })
+    await api.addRoutine({ botId, schedule: schedule.trim() || 'every 30 m', prompt: prompt.trim() })
     setPrompt('')
-    onChange(await api.listRoutines())
+    await refresh()
   }
   const teach = async () => {
     if (!botId) return
-    await api.teachRoutine({ botId, schedule })
-    onChange(await api.listRoutines())
+    await api.teachRoutine({ botId, schedule: schedule.trim() || 'every 30 m' })
+    await refresh()
   }
+  const toggle = async (r: Routine) => {
+    await api.toggleRoutine(r.id, !r.enabled)
+    await refresh()
+  }
+  const stop = async (r: Routine) => {
+    const ok = await confirmDialog({
+      title: `Stop this ${r.origin === 'reminder' ? 'reminder' : 'schedule'}?`,
+      body: r.prompt,
+      confirmLabel: 'Stop',
+      danger: true,
+    })
+    if (!ok) return
+    await api.removeRoutine(r.id)
+    await refresh()
+  }
+
+  const card = (r: Routine): React.JSX.Element => {
+    const bot = bots.find((b) => b.id === r.botId)
+    const next = r.enabled ? nextRunLabel(r.schedule) : ''
+    return (
+      <div
+        key={r.id}
+        data-routine={r.id}
+        className="rounded-[12px] px-3 py-2.5"
+        style={{ background: 'var(--bg-card)', border: `0.5px solid ${focusId === r.id ? 'var(--accent)' : 'var(--border)'}` }}
+      >
+        <div className="flex items-start gap-2">
+          <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0" style={{ background: r.enabled ? 'var(--text-success)' : 'var(--text-warning)' }} />
+          <div className="min-w-0 flex-1">
+            <p className="text-[12px] font-medium leading-snug">{r.prompt}</p>
+            <p className="text-[10.5px] mt-1 truncate" style={{ color: 'var(--text-tertiary)' }}>
+              {bot ? `${bot.name} · ` : ''}
+              {scheduleLabel(r.schedule)}
+              {!r.enabled ? ' · paused' : next ? ` · ${next}` : ''}
+            </p>
+          </div>
+        </div>
+        <div className="flex gap-3 mt-2">
+          <Button
+            variant="link"
+            onClick={() => void toggle(r)}
+            className="h-auto p-0 text-[10.5px]"
+            style={{ color: r.enabled ? 'var(--text-warning)' : 'var(--text-success)' }}
+          >
+            {r.enabled ? 'Pause' : 'Resume'}
+          </Button>
+          <Button variant="link" onClick={() => void stop(r)} className="h-auto p-0 text-[10.5px]" style={{ color: 'var(--text-danger)' }}>
+            Stop
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  const reminders = routines.filter((r) => r.origin === 'reminder')
+  const schedules = routines.filter((r) => r.origin !== 'reminder')
+
   return (
     <>
-      <PanelHeader title="Schedules" subtitle="Teach a finished task, or schedule with `every 30 m`, `every 2 h`, or `09:00`." onClose={onClose} />
+      <PanelHeader title="Schedules" subtitle="Recurring tasks and reminders. Use `every 30 m`, `every 2 h`, or `09:00`." onClose={onClose} />
       <div className="p-3 grid gap-2" style={{ borderBottom: '0.5px solid var(--border)' }}>
-        <Input value={schedule} onChange={(e) => setSchedule(e.target.value)} className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <Input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="what to run" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
-        <Button onClick={() => void add()} disabled={!prompt.trim() || !botId} className="h-auto rounded-[10px] py-2 text-[12px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
-          Schedule
-        </Button>
-        <Button variant="outline" onClick={() => void teach()} disabled={!botId} className="h-auto rounded-[10px] py-2 text-[12px]" style={{ color: 'var(--text-accent)', background: 'var(--bg-card)' }}>
-          Teach last task
-        </Button>
+        {bots.length > 1 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {bots.map((b) => {
+              const on = b.id === botId
+              return (
+                <Button
+                  key={b.id}
+                  variant="outline"
+                  onClick={() => setPickedBot(b.id)}
+                  className="h-auto flex items-center gap-1.5 rounded-full pl-1 pr-2.5 py-1 text-[11px]"
+                  style={{ background: on ? 'var(--accent-soft)' : 'var(--bg-card)', border: `0.5px solid ${on ? 'var(--accent)' : 'var(--border)'}`, color: on ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                >
+                  <BlobAvatar hue={b.hue} size={16} />
+                  {b.name}
+                </Button>
+              )
+            })}
+          </div>
+        ) : null}
+        <Input value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="every 30 m" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <Input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="what to run or remind" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+        <div className="grid grid-cols-2 gap-2">
+          <Button onClick={() => void add()} disabled={!prompt.trim() || !botId} className="h-auto rounded-[10px] py-2 text-[12px] font-medium" style={{ background: 'var(--fill-emphasis)', color: 'var(--accent-ink)' }}>
+            Schedule
+          </Button>
+          <Button variant="outline" onClick={() => void teach()} disabled={!botId} className="h-auto rounded-[10px] py-2 text-[12px]" style={{ color: 'var(--text-accent)', background: 'var(--bg-card)' }}>
+            Teach last task
+          </Button>
+        </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
-        {routines.map((r) => {
-          const bot = bots.find((b) => b.id === r.botId)
-          return (
-            <div key={r.id} className="rounded-[12px] px-3 py-2" style={{ background: 'var(--bg-card)', border: '0.5px solid var(--border)' }}>
-              <div className="flex justify-between text-[12px]">
-                <span className="font-medium">
-                  {bot?.name ?? r.botId}
-                  {r.origin === 'taught' ? <span style={{ color: 'var(--text-tertiary)' }}> · taught</span> : null}
-                </span>
-                <span style={{ color: 'var(--text-tertiary)' }}>{r.schedule}</span>
-              </div>
-              <p className="text-[11px] mt-1" style={{ color: 'var(--text-secondary)' }}>
-                {r.prompt}
-              </p>
-              <div className="flex gap-2 mt-2">
-                <Button
-                  variant="link"
-                  onClick={async () => {
-                    await api.toggleRoutine(r.id, !r.enabled)
-                    onChange(await api.listRoutines())
-                  }}
-                  className="h-auto p-0 text-[10px]"
-                  style={{ color: r.enabled ? 'var(--text-warning)' : 'var(--text-accent)' }}
-                >
-                  {r.enabled ? 'Disable' : 'Enable'}
-                </Button>
-                <Button
-                  variant="link"
-                  onClick={async () => {
-                    await api.removeRoutine(r.id)
-                    onChange(await api.listRoutines())
-                  }}
-                  className="h-auto p-0 text-[10px]"
-                  style={{ color: 'var(--text-danger)' }}
-                >
-                  Remove
-                </Button>
-              </div>
-            </div>
-          )
-        })}
-        {!routines.length && (
-          <p className="text-[12px]" style={{ color: 'var(--text-tertiary)' }}>
-            No schedules yet.
+      <div ref={listRef} className="flex-1 overflow-y-auto p-3 space-y-4">
+        {reminders.length > 0 ? (
+          <div className="space-y-2">
+            <p className="text-[10.5px] font-medium uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+              Reminders
+            </p>
+            {reminders.map(card)}
+          </div>
+        ) : null}
+        {schedules.length > 0 ? (
+          <div className="space-y-2">
+            <p className="text-[10.5px] font-medium uppercase tracking-[0.12em]" style={{ color: 'var(--text-tertiary)' }}>
+              Schedules
+            </p>
+            {schedules.map(card)}
+          </div>
+        ) : null}
+        {!routines.length ? (
+          <p className="text-[12px] leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
+            No schedules yet. Ask an agent “remind me to drink water every 30 min”, or add one above.
           </p>
-        )}
+        ) : null}
       </div>
     </>
   )
