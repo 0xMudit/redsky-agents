@@ -25,8 +25,9 @@ npm install          # also downloads the Electron binary (~100 MB)
 npm start            # build + launch
 ```
 
-`npm install` is the only setup step. There is no code generation, no database migration, and no environment
-file to create.
+`npm install` is the only setup step (Node **22.13+**, for the built-in `node:sqlite`). There is no code
+generation, no manual database migration — the local `chat.db` is created and migrated automatically on first
+run — and no environment file to create.
 
 ## Scripts
 

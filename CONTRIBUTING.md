@@ -1,8 +1,8 @@
 # Contributing to Red Sky
 
 Thanks for wanting to help. Red Sky is a small, opinionated codebase — an Electron shell around a locally
-spawned OpenCode server — and it is very approachable: no monorepo, no build system to learn, no database, and
-no generated code.
+spawned OpenCode server — and it is very approachable: no monorepo, no build system to learn, no database
+server to run (just one embedded SQLite file, created automatically), and no generated code.
 
 This document covers how to get set up, how to propose changes, and what a reviewable pull request looks like.
 By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).

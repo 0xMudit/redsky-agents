@@ -139,11 +139,15 @@ Adding a channel means touching four files — the walkthrough is in
 
 ## Persistence
 
-There is no database. Each store is a `JsonStore<T>` over one file in `userData`, written atomically
-(temp file + rename, with a copy/unlink fallback for Windows) so a crash mid-write cannot corrupt state.
+There are two layers. Structured, queryable state lives in **one local SQLite database**, `chat.db`, opened
+through Node's built-in `node:sqlite` (so there is no native module to build and no packaging change). It is
+created and migrated on first run — a new install needs no setup step. Everything else remains a `JsonStore<T>`
+over one file in `userData`, written atomically (temp file + rename, with a copy/unlink fallback for Windows) so
+a crash mid-write cannot corrupt state.
 
 | Module | File | Shape |
 | --- | --- | --- |
+| `lib/sqlite.ts` + `database.ts` | `chat.db` (SQLite, WAL) | The searchable conversation record, `messages` with an FTS5 index for fast keyword/prefix search, `settings`, `user_profile`, the append-only `events` behaviour stream, and reserved `embeddings`. Schema lives in ordered migrations. |
 | `store.ts` | `bots.json` | `Bot[]` — the largest object in the app; also migrates the legacy `tasks.json`. |
 | `settings.ts` | `settings.json` | `AppSettings`, normalized on every read so a corrupted value cannot break boot. |
 | `memory.ts` | `memory.json` | `MemoryRow[]` with naive keyword scoring for recall. |

@@ -4,6 +4,7 @@ import { autoUpdater } from 'electron-updater'
 import { createAgent, JOB_TEMPLATES, type AgentHandle } from './agent'
 import { audit } from './audit'
 import { createConnectorStore } from './connectors'
+import { createDatabase } from './database'
 import { createComputerStore } from './cloud/computer'
 import { createDeviceStore } from './cloud/devices'
 import { buildHandoffPrompt } from './collab'
@@ -24,7 +25,7 @@ import { createVault } from './vault'
 import { checkOpenCode, composeFeedbackUrl, redactedLogTail } from './beta'
 import { previewOf } from '../shared/visible'
 import type { ModelRef } from './http'
-import type { AppSettings, Bot, ConnectorStatus, EventEnvelope, NoticeKind } from '../shared/types'
+import type { AppSettings, Bot, ConnectorStatus, EventEnvelope, NoticeKind, SearchHit } from '../shared/types'
 import type { DevicePlatform, Handoff, RecordingStep } from '../shared/cloud'
 
 let mainWindow: BrowserWindow | null = null
@@ -36,6 +37,7 @@ let connectorStore: ReturnType<typeof createConnectorStore> | undefined
 let roomStore: ReturnType<typeof createRoomStore> | undefined
 let noticeStore: ReturnType<typeof createNoticeStore> | undefined
 let vaultStore: ReturnType<typeof createVault> | undefined
+let databaseStore: ReturnType<typeof createDatabase> | undefined
 let computerStore: ReturnType<typeof createComputerStore> | undefined
 let deviceStore: ReturnType<typeof createDeviceStore> | undefined
 let recordingStore: ReturnType<typeof createRecordingStore> | undefined
@@ -66,6 +68,22 @@ function notices(): ReturnType<typeof createNoticeStore> {
 }
 function vault(): ReturnType<typeof createVault> {
   return (vaultStore ??= createVault())
+}
+/** The local SQLite database (`chat.db`): chat search, settings, profile, events. */
+function db(): ReturnType<typeof createDatabase> {
+  return (databaseStore ??= createDatabase())
+}
+/** Append a behaviour event to the local database. Best-effort — never throws. */
+function recordEvent(
+  type: string,
+  name: string,
+  extra: { user?: string; botId?: string; sessionId?: string; props?: unknown } = {},
+): void {
+  try {
+    db().events.add({ type, name, user: settings().get().userName, ...extra })
+  } catch {
+    /* behaviour logging must never break a run */
+  }
 }
 function computers(): ReturnType<typeof createComputerStore> {
   return (computerStore ??= createComputerStore())
@@ -313,13 +331,31 @@ function wireIpc(): void {
     return a.branchFrom(botId, prompt, parseModel(model))
   })
 
-  ipcMain.handle('rs:search', async (_e, query: string) => (query?.trim() ? requireAgent().search(query.trim()) : []))
+  ipcMain.handle('rs:search', async (_e, query: string) => {
+    const q = query?.trim()
+    if (!q) return []
+    // Conversations recorded in the local database (fast FTS5) come first, then
+    // the in-workspace file hits the agent already knew how to find.
+    const messageHits: SearchHit[] = db()
+      .messages.search(q, { limit: 20 })
+      .map((hit) => ({
+        id: `dbmsg:${hit.id}`,
+        kind: 'message',
+        title: `${hit.botName} · ${hit.role}`,
+        snippet: hit.snippet,
+        botId: hit.botId,
+      }))
+    const hits: SearchHit[] = [...messageHits, ...requireAgent().search(q)]
+    recordEvent('search', 'query', { props: { query: q, results: hits.length } })
+    return hits.slice(0, 40)
+  })
 
   ipcMain.handle('rs:lifeTip', async () => requireAgent().lifeTip())
 
   ipcMain.handle('rs:send', async (_e, botId: string, payload: { text: string; model?: string; roomId?: string }) => {
     if (!payload?.text?.trim()) throw new Error('empty prompt')
     if (!baseUrl) throw new Error('OpenCode is still starting')
+    recordEvent('prompt', 'send', { botId, props: { length: payload.text.length, roomId: payload.roomId } })
     return requireAgent().send(botId, { text: payload.text, model: parseModel(payload.model), roomId: payload.roomId })
   })
 
@@ -487,7 +523,13 @@ function wireIpc(): void {
   ipcMain.handle('rs:getSettings', async () => settings().get())
   ipcMain.handle('rs:updateSettings', async (_e, patch: Partial<AppSettings>) => {
     const next = settings().update(patch)
+    try {
+      db().settings.set('app', next)
+    } catch {
+      /* the settings mirror is best-effort; settings.json remains the source */
+    }
     broadcast({ source: 'settings', settings: next })
+    recordEvent('settings', 'update', { props: { keys: Object.keys(patch ?? {}) } })
     return next
   })
 
@@ -678,6 +720,13 @@ app.whenReady().then(async () => {
     settings: settings(),
     vault: vault(),
     federation: federation(),
+    onTurn: (turn) => {
+      try {
+        db().messages.index(turn)
+      } catch {
+        /* indexing must never break a run */
+      }
+    },
     scheduleReminder: (botId, schedule, prompt) => {
       const row = scheduler!.add(botId, schedule, prompt, 'reminder')
       broadcast({ source: 'routines', routines: scheduler!.rows() })
@@ -696,6 +745,17 @@ app.whenReady().then(async () => {
   vault().init()
   vault().syncProfile(agent.memory.list())
   agent.importHistory()
+  // Open (creating + migrating on first run) the local database, then index every
+  // recorded turn so chats are searchable, and mirror the settings/profile in.
+  db().init()
+  db().messages.backfill(vault().turns())
+  try {
+    db().settings.set('app', settings())
+  } catch {
+    /* settings.json remains the source; the mirror is best-effort */
+  }
+  db().profile.replace(agent.memory.list())
+  recordEvent('app', 'ready')
   createWindow()
   broadcast({ source: 'status', state: 'starting', detail: 'starting OpenCode…' })
   setCloudState('starting', 'starting OpenCode…')
@@ -771,4 +831,5 @@ app.on('before-quit', () => {
   scheduler?.stop()
   void cloudRuntime.stop()
   stopServer()
+  databaseStore?.close()
 })

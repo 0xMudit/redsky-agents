@@ -14,7 +14,7 @@ import { type SettingsStore } from './settings'
 import { parseCancelReminder, parseReminder, reminderLabel } from './remind'
 import { createBotStore, HUES, type BotRecord, type BotStore, type ChatMessage, type ComputerEvent } from './store'
 import { createTipEngine } from './tips'
-import { safeTime, type Vault } from './vault'
+import { safeTime, type Vault, type VaultTurn } from './vault'
 import { diffSnaps, searchWorkspaceFiles, snapshotWorkspace, type FileSnap } from './workspace'
 import { partLooksLikeThinking, previewOf, stripThinking } from '../shared/visible'
 import type { Artifact, Routine, SearchHit } from '../shared/types'
@@ -27,6 +27,12 @@ export interface AgentDeps {
   cancelReminders: (botId: string) => number
   /** Durable conversation record. Optional so pure-in-memory tests can omit it. */
   vault?: Vault
+  /**
+   * Sink for turns as they are recorded, so they can also be indexed into the
+   * local database (fast full-text search). Optional; errors are swallowed so a
+   * database problem can never break a run.
+   */
+  onTurn?: (turn: VaultTurn) => void
   /**
    * Cross-bot shared knowledge (feature 7). Optional so tests and the headless
    * path can omit it; when present, facts this bot learns are published and
@@ -293,7 +299,13 @@ export function createAgent(deps: AgentDeps): AgentHandle {
       botName: bot.name,
       user: deps.settings.get().userName,
     })
-    if (turn && msg.role === 'user') pendingTurn.set(bot.id, turn.id)
+    if (!turn) return
+    try {
+      deps.onTurn?.(turn)
+    } catch {
+      /* indexing is best-effort — never let it break a conversation */
+    }
+    if (msg.role === 'user') pendingTurn.set(bot.id, turn.id)
   }
 
   /**

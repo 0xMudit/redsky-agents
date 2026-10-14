@@ -24,7 +24,7 @@
   ],
   "main": "dist/main.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "build": "node build.mjs && vite build --config vite.config.ts",
