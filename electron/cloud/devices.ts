@@ -20,6 +20,8 @@ export interface DeviceStore {
   touch: (id: string) => DeviceClient
   setPush: (id: string, push: boolean) => DeviceClient
   remove: (id: string) => void
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 const PLATFORMS: DevicePlatform[] = ['desktop', 'web', 'ios', 'android']
@@ -72,5 +74,6 @@ export function createDeviceStore(): DeviceStore {
       rows = rows.filter((d) => d.id !== id)
       persist()
     },
+    flush: () => db.flush(),
   }
 }

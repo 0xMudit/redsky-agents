@@ -16,3 +16,21 @@ Thumbs.db
 .vercel
 .env*
 *.tsbuildinfo
+
+# Python bytecode — not part of this project.
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Stray audio/binary assets that belong under renderer/public/, not the root.
+*.wav
+*.mp3
+
+# Next.js / web subproject build artifacts.
+web/.next/
+web/.vercel/
+web/tsconfig.tsbuildinfo
+
+# Editor / OS artifacts.
+*.swp
+*.swo

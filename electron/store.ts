@@ -27,6 +27,8 @@ export interface BotStore {
   upsert: (t: Bot) => Bot
   delete: (id: string) => void
   changes: EventEmitter
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 export function createBotStore(): BotStore {
@@ -62,6 +64,7 @@ export function createBotStore(): BotStore {
       events.emit('deleted', id)
     },
     changes: events,
+    flush: () => db.flush(),
   }
 }
 

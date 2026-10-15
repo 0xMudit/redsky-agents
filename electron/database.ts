@@ -143,6 +143,23 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
   let db: SqliteDatabase | null = null
   let ready = false
 
+  /**
+   * Prepared-statement cache. Statements are compiled once per SQL string and
+   * reused on every subsequent call. The cache is cleared when the connection is
+   * closed so stale statement handles cannot outlive their database.
+   */
+  const stmtCache = new Map<string, import('./lib/sqlite').SqliteStatement>()
+
+  /** Return (and lazily compile) a prepared statement for `sql`. */
+  function stmt(sql: string): import('./lib/sqlite').SqliteStatement {
+    let s = stmtCache.get(sql)
+    if (!s) {
+      s = db!.prepare(sql)
+      stmtCache.set(sql, s)
+    }
+    return s
+  }
+
   function init(): void {
     if (ready) return
     ready = true
@@ -158,7 +175,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
   function readNote(id: string): Note | undefined {
     const d = conn()
     if (!d) return undefined
-    const row = d.prepare('SELECT * FROM notes WHERE id = ?').get(id) as Record<string, unknown> | undefined
+    const row = stmt('SELECT * FROM notes WHERE id = ?').get(id) as Record<string, unknown> | undefined
     return row ? noteFromRow(row) : undefined
   }
 
@@ -177,6 +194,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
           /* already closed */
         }
       }
+      stmtCache.clear()
       db = null
       ready = false
     },
@@ -186,8 +204,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
         const d = conn()
         const text = turn.text?.trim()
         if (!d || !text) return false
-        const result = d
-          .prepare(
+        const result = stmt(
             'INSERT OR IGNORE INTO messages(id, at, role, text, bot_id, bot_name, user) VALUES (?, ?, ?, ?, ?, ?, ?)',
           )
           .run(
@@ -208,13 +225,13 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
         let added = 0
         d.exec('BEGIN')
         try {
-          const stmt = d.prepare(
+          const s = stmt(
             'INSERT OR IGNORE INTO messages(id, at, role, text, bot_id, bot_name, user) VALUES (?, ?, ?, ?, ?, ?, ?)',
           )
           for (const turn of turns) {
             const text = turn.text?.trim()
             if (!text) continue
-            const result = stmt.run(
+            const result = s.run(
               turn.id ?? newId('msg'),
               safeTime(turn.at),
               turn.role,
@@ -243,8 +260,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
 
         if (!match) {
           // No content words: most recent first, scoped by the same filters.
-          return d
-            .prepare(
+          return stmt(
               `SELECT id, at, role, text, bot_id, bot_name, user, text AS snippet, 0 AS score
                FROM messages
                WHERE (? IS NULL OR bot_id = ?) AND (? IS NULL OR user = ?)
@@ -254,8 +270,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
             .map(hitFromRow)
         }
 
-        return d
-          .prepare(
+        return stmt(
             `SELECT m.id, m.at, m.role, m.text, m.bot_id, m.bot_name, m.user,
                     snippet(messages_fts, 0, '[', ']', '…', 12) AS snippet,
                     bm25(messages_fts) AS score
@@ -274,7 +289,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
       count() {
         const d = conn()
         if (!d) return 0
-        return Number((d.prepare('SELECT COUNT(*) AS n FROM messages').get() as { n: number }).n)
+        return Number((stmt('SELECT COUNT(*) AS n FROM messages').get() as { n: number }).n)
       },
     },
 
@@ -282,7 +297,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
       set(key, value) {
         const d = conn()
         if (!d) return
-        d.prepare(
+        stmt(
           `INSERT INTO settings(key, value, updated_at) VALUES (?, ?, ?)
            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
         ).run(key, JSON.stringify(value), Date.now())
@@ -290,7 +305,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
       get<T = unknown>(key: string): T | undefined {
         const d = conn()
         if (!d) return undefined
-        const row = d.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
+        const row = stmt('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
         if (!row) return undefined
         try {
           return JSON.parse(row.value) as T
@@ -302,7 +317,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
         const d = conn()
         if (!d) return {}
         const out: Record<string, unknown> = {}
-        for (const row of d.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>) {
+        for (const row of stmt('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>) {
           try {
             out[row.key] = JSON.parse(row.value)
           } catch {
@@ -320,9 +335,9 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
         d.exec('BEGIN')
         try {
           d.exec('DELETE FROM user_profile')
-          const stmt = d.prepare('INSERT INTO user_profile(id, key, value, bot_id, at) VALUES (?, ?, ?, ?, ?)')
+          const s = stmt('INSERT INTO user_profile(id, key, value, bot_id, at) VALUES (?, ?, ?, ?, ?)')
           for (const row of rows) {
-            stmt.run(
+            s.run(
               row.id,
               row.key,
               row.value,
@@ -340,12 +355,10 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
         const d = conn()
         if (!d) return []
         const rows = botId
-          ? d
-              .prepare(
+          ? stmt(
                 'SELECT id, key, value, bot_id, at FROM user_profile WHERE bot_id IS NULL OR bot_id = ? ORDER BY at DESC',
-              )
-              .all(botId)
-          : d.prepare('SELECT id, key, value, bot_id, at FROM user_profile ORDER BY at DESC').all()
+              ).all(botId)
+          : stmt('SELECT id, key, value, bot_id, at FROM user_profile ORDER BY at DESC').all()
         return (rows as Array<Record<string, unknown>>).map((r) => ({
           id: String(r.id),
           key: String(r.key),
@@ -371,7 +384,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
           sessionId: asText(input.sessionId),
           props: input.props,
         }
-        d.prepare(
+        stmt(
           'INSERT INTO events(id, at, user, type, name, bot_id, session_id, props) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
         ).run(
           row.id,
@@ -388,8 +401,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
       list({ limit = 100, type, botId } = {}) {
         const d = conn()
         if (!d) return []
-        const rows = d
-          .prepare(
+        const rows = stmt(
             `SELECT id, at, type, name, user, bot_id, session_id, props FROM events
              WHERE (? IS NULL OR type = ?) AND (? IS NULL OR bot_id = ?)
              ORDER BY at DESC LIMIT ?`,
@@ -409,7 +421,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
       count() {
         const d = conn()
         if (!d) return 0
-        return Number((d.prepare('SELECT COUNT(*) AS n FROM events').get() as { n: number }).n)
+        return Number((stmt('SELECT COUNT(*) AS n FROM events').get() as { n: number }).n)
       },
     },
 
@@ -429,7 +441,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
           updatedAt: now,
         }
         if (!d) return note
-        d.prepare(
+        stmt(
           `INSERT INTO notes(id, title, body, tags, pinned, source, bot_id, at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
@@ -451,8 +463,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
       list({ limit = 200 } = {}) {
         const d = conn()
         if (!d) return []
-        const rows = d
-          .prepare('SELECT * FROM notes ORDER BY pinned DESC, updated_at DESC LIMIT ?')
+        const rows = stmt('SELECT * FROM notes ORDER BY pinned DESC, updated_at DESC LIMIT ?')
           .all(Math.min(1000, Math.max(1, limit)))
         return (rows as Array<Record<string, unknown>>).map(noteFromRow)
       },
@@ -469,7 +480,7 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
           pinned: patch.pinned !== undefined ? Boolean(patch.pinned) : current.pinned,
           updatedAt: Date.now(),
         }
-        d.prepare('UPDATE notes SET title = ?, body = ?, tags = ?, pinned = ?, updated_at = ? WHERE id = ?').run(
+        stmt('UPDATE notes SET title = ?, body = ?, tags = ?, pinned = ?, updated_at = ? WHERE id = ?').run(
           next.title,
           next.body,
           JSON.stringify(next.tags),
@@ -486,13 +497,13 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
         const d = conn()
         if (!d) return undefined
         const next: Note = { ...current, body, updatedAt: Date.now() }
-        d.prepare('UPDATE notes SET body = ?, updated_at = ? WHERE id = ?').run(next.body, next.updatedAt, id)
+        stmt('UPDATE notes SET body = ?, updated_at = ? WHERE id = ?').run(next.body, next.updatedAt, id)
         return next
       },
       remove(id) {
         const d = conn()
         if (!d) return false
-        const info = d.prepare('DELETE FROM notes WHERE id = ?').run(id)
+        const info = stmt('DELETE FROM notes WHERE id = ?').run(id)
         return Number(info.changes ?? 0) > 0
       },
       search(query, { limit = 30 } = {}) {
@@ -501,38 +512,42 @@ export function createDatabase(opts: DatabaseOptions = {}): Database {
         const cap = Math.min(200, Math.max(1, limit))
         const match = toMatchQuery(query)
         const rows = match
-          ? d
-              .prepare(
+          ? stmt(
                 `SELECT n.id, n.title, n.tags, n.updated_at,
                         snippet(notes_fts, -1, '[', ']', ' … ', 12) AS snippet,
                         bm25(notes_fts) AS score
                  FROM notes_fts JOIN notes n ON n.rowid = notes_fts.rowid
                  WHERE notes_fts MATCH ? ORDER BY score LIMIT ?`,
-              )
-              .all(match, cap)
-          : d
-              .prepare(
+              ).all(match, cap)
+          : stmt(
                 `SELECT id, title, tags, updated_at, body AS snippet, 0 AS score
                  FROM notes ORDER BY updated_at DESC LIMIT ?`,
-              )
-              .all(cap)
+              ).all(cap)
         return (rows as Array<Record<string, unknown>>).map(noteHitFromRow)
       },
       count() {
         const d = conn()
         if (!d) return 0
-        return Number((d.prepare('SELECT COUNT(*) AS n FROM notes').get() as { n: number }).n)
+        return Number((stmt('SELECT COUNT(*) AS n FROM notes').get() as { n: number }).n)
       },
     },
 
     stats() {
       const d = conn()
       if (!d) return { messages: 0, events: 0, profile: 0, notes: 0 }
+      // One round-trip instead of four separate COUNT queries.
+      const row = stmt(
+        `SELECT
+           (SELECT COUNT(*) FROM messages)     AS messages,
+           (SELECT COUNT(*) FROM events)       AS events,
+           (SELECT COUNT(*) FROM user_profile) AS profile,
+           (SELECT COUNT(*) FROM notes)        AS notes`,
+      ).get() as { messages: number; events: number; profile: number; notes: number }
       return {
-        messages: Number((d.prepare('SELECT COUNT(*) AS n FROM messages').get() as { n: number }).n),
-        events: Number((d.prepare('SELECT COUNT(*) AS n FROM events').get() as { n: number }).n),
-        profile: Number((d.prepare('SELECT COUNT(*) AS n FROM user_profile').get() as { n: number }).n),
-        notes: Number((d.prepare('SELECT COUNT(*) AS n FROM notes').get() as { n: number }).n),
+        messages: Number(row.messages),
+        events: Number(row.events),
+        profile: Number(row.profile),
+        notes: Number(row.notes),
       }
     },
   }

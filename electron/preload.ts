@@ -90,6 +90,7 @@ const redsky = {
   windowMinimize: (): void => ipcRenderer.send('win:minimize'),
   windowMaximize: (): void => ipcRenderer.send('win:maximize'),
   windowClose: (): void => ipcRenderer.send('win:close'),
+  checkPermissions: () => ipcRenderer.invoke('rs:checkPermissions'),
   onEvent: (cb: (evt: unknown) => void): (() => void) => {
     const listener = (_e: Electron.IpcRendererEvent, evt: unknown) => cb(evt)
     ipcRenderer.on('rs:event', listener)

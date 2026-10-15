@@ -16,6 +16,8 @@ export const CONNECTOR_CATALOG: Array<Pick<Connector, 'id' | 'name' | 'descripti
 export interface ConnectorStore {
   list: () => Connector[]
   upsert: (id: string, status: ConnectorStatus, note?: string) => Connector
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 export function createConnectorStore(): ConnectorStore {
@@ -46,6 +48,7 @@ export function createConnectorStore(): ConnectorStore {
       db.write(saved)
       return list().find((c) => c.id === id)!
     },
+    flush: () => db.flush(),
   }
 }
 

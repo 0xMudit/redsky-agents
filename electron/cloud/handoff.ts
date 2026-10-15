@@ -33,6 +33,8 @@ export interface HandoffStore {
   get: (id: string) => Handoff | undefined
   queue: (payload: { fromBotId: string; toBotId: string; prompt: string }) => Handoff
   transition: (id: string, state: HandoffState, note?: string) => Handoff
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 export function createHandoffStore(): HandoffStore {
@@ -77,5 +79,6 @@ export function createHandoffStore(): HandoffStore {
       persist()
       return clone(row)
     },
+    flush: () => db.flush(),
   }
 }

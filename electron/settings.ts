@@ -14,6 +14,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export interface SettingsStore {
   get: () => AppSettings
   update: (patch: Partial<AppSettings>) => AppSettings
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 export function createSettingsStore(): SettingsStore {
@@ -40,5 +42,6 @@ defaultModel: raw.defaultModel,
       db.write(next)
       return next
     },
+    flush: () => db.flush(),
   }
 }

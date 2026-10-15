@@ -84,6 +84,8 @@ export interface RecordingStore {
   stop: (id: string) => Recording
   /** Record which routine a finished recording produced. */
   markRoutine: (id: string, routineId: string) => Recording
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 /**
@@ -170,5 +172,6 @@ export function createRecordingStore(): RecordingStore {
       persist()
       return clone(row)
     },
+    flush: () => db.flush(),
   }
 }

@@ -22,8 +22,9 @@ import { startServer, serverEvents, stop as stopServer } from './server'
 import { createSettingsStore } from './settings'
 import { tools } from './tools'
 import { createVault } from './vault'
-import { importDroppedFiles } from './workspace'
+import { importDroppedFiles, snapshotWorkspaceAsync } from './workspace'
 import { checkOpenCode, composeFeedbackUrl, redactedLogTail } from './beta'
+import { runStartupPermissionCheck, queryPermissions } from './permissions'
 import { previewOf } from '../shared/visible'
 import type { ModelRef } from './http'
 import type { AppSettings, Bot, ConnectorStatus, EventEnvelope, NoticeKind, SearchHit } from '../shared/types'
@@ -259,9 +260,40 @@ function createWindow(): void {
   void mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'renderer', 'index.html'))
 }
 
-function broadcast(evt: unknown): void {
+// ── IPC broadcast coalescence ──────────────────────────────────────────────
+// bot / status events stream very rapidly during a run (one per SSE token).
+// Coalesce same-source events that arrive within a 16 ms window (≈ 1 frame)
+// so the renderer never receives more IPC frames than the display can consume.
+// Non-bot events (settings, notices, etc.) are flushed immediately.
+
+type BroadcastEvent = Record<string, unknown>
+const pendingBotEvt = new Map<string, BroadcastEvent>()
+let botFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+function broadcastImmediate(evt: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('rs:event', evt)
+  }
+}
+
+function scheduleBotFlush(): void {
+  if (botFlushTimer) return
+  botFlushTimer = setTimeout(() => {
+    botFlushTimer = null
+    for (const evt of pendingBotEvt.values()) broadcastImmediate(evt)
+    pendingBotEvt.clear()
+  }, 16)
+}
+
+function broadcast(evt: unknown): void {
+  const e = evt as BroadcastEvent
+  if (e.source === 'bot' && typeof (e.bot as BroadcastEvent | undefined)?.id === 'string') {
+    // Coalesce: only keep the latest snapshot per bot id.
+    pendingBotEvt.set((e.bot as BroadcastEvent).id as string, e)
+    scheduleBotFlush()
+  } else {
+    // All other sources (status, settings, notices, rooms, …) go out immediately.
+    broadcastImmediate(evt)
   }
 }
 
@@ -398,7 +430,7 @@ function wireIpc(): void {
   })
 
   ipcMain.handle('rs:files', async (_e, rel?: string) => {
-    // Try the OpenCode /file endpoint first; fall back to the local workspace walker
+    // Try the OpenCode /file endpoint first; fall back to the local async workspace walker
     // if it returns nothing (endpoint not supported in this OpenCode version) or errors.
     try {
       const nodes = await requireAgent().listFiles(rel)
@@ -406,11 +438,12 @@ function wireIpc(): void {
     } catch {
       /* fall through to local */
     }
-    // Local fallback: read the workspace directory directly
-    const { readdirSync, statSync } = require('node:fs') as typeof import('node:fs')
-    const { workspaceDir: wsDir } = require('./paths') as typeof import('./paths')
+    // Async local fallback: never blocks the main-process event loop.
     try {
+      const { workspaceDir: wsDir } = require('./paths') as typeof import('./paths')
       const base = rel && rel !== '.' ? path.join(wsDir(), rel) : wsDir()
+      // For a direct directory listing (shallow, not a walk), readdir is fine.
+      const { readdirSync } = require('node:fs') as typeof import('node:fs')
       const entries = readdirSync(base, { withFileTypes: true })
       return entries
         .filter((e) => !e.name.startsWith('.') || e.name === '.env.example')
@@ -757,6 +790,9 @@ function wireIpc(): void {
     else mainWindow.maximize()
   })
   ipcMain.on('win:close', () => mainWindow?.close())
+
+  // OS permission status — read-only query, no prompt.
+  ipcMain.handle('rs:checkPermissions', async () => queryPermissions())
 }
 
 serverEvents.on('status', (evt) => broadcast({ source: 'status', ...(evt as object) }))
@@ -764,8 +800,17 @@ serverEvents.on('status', (evt) => broadcast({ source: 'status', ...(evt as obje
 wireIpc()
 
 app.whenReady().then(async () => {
+  const t0 = Date.now()
   log.info('app.ready')
   if (process.platform === 'win32') app.setAppUserModelId('com.redsky.app')
+
+  // ── Phase 1: critical path only — window visible ASAP ────────────────────
+  // Touch the stores that createAgent needs synchronously; everything else
+  // is deferred to after the window is shown (phase 2 below).
+  const [settingsNow, connectorsNow, roomsNow, vaultNow, federationNow] = [
+    settings(), connectors(), rooms(), vault(), federation(),
+  ]
+
   scheduler = createScheduler((row) => {
     const a = agent
     if (!a) return
@@ -781,12 +826,13 @@ app.whenReady().then(async () => {
       log.error('routine.failed', { id: row.id, err: (err as Error).message })
     })
   })
+
   agent = createAgent({
-    connectors: connectors(),
-    rooms: rooms(),
-    settings: settings(),
-    vault: vault(),
-    federation: federation(),
+    connectors: connectorsNow,
+    rooms: roomsNow,
+    settings: settingsNow,
+    vault: vaultNow,
+    federation: federationNow,
     onTurn: (turn) => {
       try {
         db().messages.index(turn)
@@ -806,29 +852,38 @@ app.whenReady().then(async () => {
     },
   })
   agent.events.on('event', (evt) => onAgentEvent(evt as EventEnvelope))
-  // Seed the vault (Documents/Red Sky), render the user profile from any
-  // durable facts already on disk, and fold existing threads into history so
-  // conversations that predate the vault still personalize future runs.
-  vault().init()
-  vault().syncProfile(agent.memory.list())
-  agent.importHistory()
-  // Open (creating + migrating on first run) the local database, then index every
-  // recorded turn so chats are searchable, and mirror the settings/profile in.
-  db().init()
-  db().messages.backfill(vault().turns())
-  try {
-    db().settings.set('app', settings())
-  } catch {
-    /* settings.json remains the source; the mirror is best-effort */
-  }
-  db().profile.replace(agent.memory.list())
-  recordEvent('app', 'ready')
+
+  // Show the window immediately so the user sees the app without waiting for
+  // vault init, DB migrations, or OpenCode startup.
   createWindow()
   broadcast({ source: 'status', state: 'starting', detail: 'starting OpenCode…' })
   setCloudState('starting', 'starting OpenCode…')
+  log.info('app.window.created', { ms: Date.now() - t0 })
+
+  // Check for the OpenCode CLI immediately — don't wait 45 s for the timeout to
+  // tell the user something they can fix right now.
+  const cliCheck = checkOpenCode()
+  if (!cliCheck.found) {
+    log.warn('opencode.cli.missing', { PATH: process.env.PATH?.slice(0, 200) })
+    broadcast({ source: 'status', state: 'offline', detail: 'opencode-missing' })
+    setCloudState('offline', 'opencode-missing')
+    // Don't attempt to start the server — it will always fail.
+    // Still run phase-2 deferred work (vault / db) so panels work offline.
+    setImmediate(() => void deferredInit())
+    return
+  }
+
+  // ── Phase 2: server + deferred init in parallel ────────────────────────────
+  // startServer() is I/O-bound (spawns a process, waits for a port).
+  // deferredInit() is also mostly I/O (vault markdown, DB migrations, backfill).
+  // Run them concurrently so neither blocks the other.
+  await Promise.allSettled([startServerPhase(), deferredInit()])
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
 
   // Auto-updater: only runs in packaged builds, not during `npm start`.
-  // Checks GitHub Releases for a newer version; notifies the user silently.
   if (app.isPackaged) {
     autoUpdater.logger = log as Parameters<typeof autoUpdater.setFeedURL>[0] extends never ? never : typeof log
     autoUpdater.autoDownload = true
@@ -855,27 +910,21 @@ app.whenReady().then(async () => {
     autoUpdater.on('error', (err) => {
       log.error('update.error', { err: (err as Error).message })
     })
-    // Check 10s after launch to avoid slowing down startup
-    setTimeout(() => void autoUpdater.checkForUpdates(), 10_000)
+    // Check 30 s after launch — not 10 s — to keep the critical path clean.
+    setTimeout(() => void autoUpdater.checkForUpdates(), 30_000)
   }
+})
 
-  // Check for the OpenCode CLI immediately — don't wait 45 s for the timeout to
-  // tell the user something they can fix right now.
-  const cliCheck = checkOpenCode()
-  if (!cliCheck.found) {
-    log.warn('opencode.cli.missing', { PATH: process.env.PATH?.slice(0, 200) })
-    broadcast({ source: 'status', state: 'offline', detail: 'opencode-missing' })
-    setCloudState('offline', 'opencode-missing')
-    // Don't attempt to start the server — it will always fail.
-    return
-  }
-
+/**
+ * Start OpenCode and wire the agent to its URL.
+ * Isolated so it can run concurrently with deferredInit().
+ */
+async function startServerPhase(): Promise<void> {
   try {
     const handle = await startServer()
     baseUrl = handle.baseUrl
-    agent.attach(baseUrl)
-    // Have life tips ready before the first send needs one.
-    agent.warmTips()
+    agent!.attach(baseUrl)
+    agent!.warmTips()
     broadcast({ source: 'status', state: 'online', detail: `opencode · ${baseUrl}` })
     setCloudState('ready', `local · ${baseUrl}`)
     audit('runtime.online', { baseUrl })
@@ -884,11 +933,51 @@ app.whenReady().then(async () => {
     serverEvents.emit('status', { state: 'offline', detail: (err as Error).message })
     setCloudState('degraded', (err as Error).message)
   }
+}
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
+/**
+ * Deferred heavy init: vault markdown, DB migration, backfill, profile sync.
+ * Runs after the window is shown — none of this blocks first render.
+ */
+async function deferredInit(): Promise<void> {
+  try {
+    // Vault: directory creation + index/log/profile markdown.
+    vault().init()
+    vault().syncProfile(agent!.memory.list())
+    // importHistory() walks every bot thread — off the critical path.
+    agent!.importHistory()
+  } catch (err) {
+    log.error('vault.init.failed', { err: (err as Error).message })
+  }
+
+  // Yield to the event loop so the window can finish painting before we
+  // hit the DB — migrations + backfill can take a noticeable moment on
+  // a large history on slow machines.
+  await new Promise<void>((r) => setImmediate(r))
+
+  try {
+    db().init()
+    // Backfill is the most expensive call; run it on the next tick so DB
+    // init itself doesn't stall the IPC queue.
+    setImmediate(() => {
+      try {
+        db().messages.backfill(vault().turns())
+        db().profile.replace(agent!.memory.list())
+      } catch (err) {
+        log.error('db.backfill.failed', { err: (err as Error).message })
+      }
+    })
+    try { db().settings.set('app', settings()) } catch { /* mirror is best-effort */ }
+  } catch (err) {
+    log.error('db.init.failed', { err: (err as Error).message })
+  }
+
+  recordEvent('app', 'ready')
+
+  // OS permission check — runs last so the window is fully visible when macOS
+  // shows its microphone/notification prompt.
+  await runStartupPermissionCheck()
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
@@ -898,5 +987,17 @@ app.on('before-quit', () => {
   scheduler?.stop()
   void cloudRuntime.stop()
   stopServer()
+  // Flush any debounced JSON writes so nothing is lost on quit.
+  settingsStore?.flush()
+  connectorStore?.flush()
+  roomStore?.flush()
+  noticeStore?.flush()
+  computerStore?.flush()
+  deviceStore?.flush()
+  recordingStore?.flush()
+  handoffStore?.flush()
+  federationStore?.flush()
+  agent?.store.flush()
+  // database closes cleanly.
   databaseStore?.close()
 })

@@ -12,6 +12,8 @@ export interface NoticeStore {
   markRead: (id: string) => AppNotice[]
   markAllRead: () => AppNotice[]
   clear: () => void
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 export function createNoticeStore(): NoticeStore {
@@ -50,5 +52,6 @@ export function createNoticeStore(): NoticeStore {
       rows = []
       persist()
     },
+    flush: () => db.flush(),
   }
 }

@@ -13,6 +13,8 @@ export interface RoomStore {
   rename: (roomId: string, title: string) => Room
   delete: (roomId: string) => void
   touch: (roomId: string, preview: string) => Room | undefined
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 export function createRoomStore(): RoomStore {
@@ -78,5 +80,6 @@ export function createRoomStore(): RoomStore {
       persist()
       return room
     },
+    flush: () => db.flush(),
   }
 }

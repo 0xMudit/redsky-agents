@@ -63,6 +63,10 @@ export function openDatabase(file: string): SqliteDatabase | null {
     // for an append-mostly local store and much cheaper than FULL.
     db.exec('PRAGMA journal_mode = WAL;')
     db.exec('PRAGMA synchronous = NORMAL;')
+    // Keep up to 8 MiB of pages in the page cache (default is ~2 MiB).
+    db.exec('PRAGMA cache_size = -8192;')
+    // Map 32 MiB of the file directly into process memory for read-heavy workloads.
+    db.exec('PRAGMA mmap_size = 33554432;')
     return db
   } catch {
     return null

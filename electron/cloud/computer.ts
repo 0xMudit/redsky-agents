@@ -35,6 +35,8 @@ export interface ComputerStore {
   stop: (botId: string) => CloudComputer
   /** Persist a login label for the bot; the secret value is never stored here. */
   addCredential: (botId: string, label: string) => CloudComputer
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 function computerRoot(botId: string): string {
@@ -101,5 +103,6 @@ export function createComputerStore(): ComputerStore {
       }
       return view(row)
     },
+    flush: () => db.flush(),
   }
 }

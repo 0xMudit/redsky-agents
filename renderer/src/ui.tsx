@@ -20,6 +20,7 @@ import {
 } from 'ionicons/icons'
 import { api } from './api'
 import { confirmDialog } from '@/components/ui/confirm'
+import { toast } from '@/components/ui/toast'
 import { dateLabel, nextRunLabel, renderMarkdown, scheduleLabel, timeLabel } from './format'
 import type {
   AppSettings,
@@ -728,7 +729,7 @@ export function SearchPalette({
 }
 
 /* ── Conversation ──────────────────────────────────────────── */
-export function MessageBlock({
+export const MessageBlock = React.memo(function MessageBlock({
   role,
   text,
   hue,
@@ -902,7 +903,7 @@ export function MessageBlock({
       </div>
     </div>,
   )
-}
+})
 
 export function RunningDots({ hue, label }: { hue: string; label?: string }): React.JSX.Element {
   return (
@@ -927,7 +928,7 @@ export function RunningDots({ hue, label }: { hue: string; label?: string }): Re
 
 /* ── Working window (life tip while an agent runs) ─────────── */
 
-export function WorkingWindow({ hue, name }: { hue: string; name?: string }): React.JSX.Element {
+export const WorkingWindow = React.memo(function WorkingWindow({ hue, name }: { hue: string; name?: string }): React.JSX.Element {
   return (
     <div className="work-window motion-fade-up" style={{ '--work-tint': hue } as React.CSSProperties}>
       <span className="work-orbit" aria-hidden="true">
@@ -942,7 +943,7 @@ export function WorkingWindow({ hue, name }: { hue: string; name?: string }): Re
       </div>
     </div>
   )
-}
+})
 
 /* ── Activity / results ────────────────────────────────────── */
 
@@ -978,7 +979,7 @@ function eventTint(kind: ComputerEvent['kind']): string {
   }
 }
 
-export function ComputerEventCard({ ev }: { ev: ComputerEvent }): React.JSX.Element {
+export const ComputerEventCard = React.memo(function ComputerEventCard({ ev }: { ev: ComputerEvent }): React.JSX.Element {
   const tint = eventTint(ev.kind)
   return (
     <div className="ev-row activity-in">
@@ -1005,7 +1006,7 @@ export function ComputerEventCard({ ev }: { ev: ComputerEvent }): React.JSX.Elem
       </div>
     </div>
   )
-}
+})
 
 function DiffList({ label, files, tone }: { label: string; files: string[]; tone: 'add' | 'chg' | 'del' }): React.JSX.Element | null {
   if (!files.length) return null
@@ -2058,14 +2059,22 @@ export function RoutinePanel({
   const refresh = async () => onChange(await api.listRoutines())
   const add = async () => {
     if (!botId || !prompt.trim() || !onceValid) return
-    await api.addRoutine({ botId, schedule: value, prompt: prompt.trim() })
-    setPrompt('')
-    await refresh()
+    try {
+      await api.addRoutine({ botId, schedule: value, prompt: prompt.trim() })
+      setPrompt('')
+      await refresh()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Could not add schedule', description: (err as Error).message })
+    }
   }
   const teach = async () => {
     if (!botId || !onceValid) return
-    await api.teachRoutine({ botId, schedule: value })
-    await refresh()
+    try {
+      await api.teachRoutine({ botId, schedule: value })
+      await refresh()
+    } catch (err) {
+      toast({ variant: 'error', title: 'Could not teach routine', description: (err as Error).message })
+    }
   }
   const toggle = async (r: Routine) => {
     await api.toggleRoutine(r.id, !r.enabled)
@@ -2185,7 +2194,22 @@ export function RoutinePanel({
             {!onceValid ? <p className="text-[10.5px]" style={{ color: 'var(--text-danger)' }}>Pick a date and time in the future.</p> : null}
           </div>
         ) : (
-          <Input value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="every 30 m · every 2 h · 09:00" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
+          <Select value={schedule} onValueChange={setSchedule}>
+            <SelectTrigger className="w-full h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)', color: 'var(--text-secondary)' }}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="every 30 m">Every 30 minutes</SelectItem>
+              <SelectItem value="every 1 h">Every hour</SelectItem>
+              <SelectItem value="every 2 h">Every 2 hours</SelectItem>
+              <SelectItem value="every 4 h">Every 4 hours</SelectItem>
+              <SelectItem value="every 6 h">Every 6 hours</SelectItem>
+              <SelectItem value="every 12 h">Every 12 hours</SelectItem>
+              <SelectItem value="09:00">Daily at 09:00</SelectItem>
+              <SelectItem value="12:00">Daily at 12:00</SelectItem>
+              <SelectItem value="18:00">Daily at 18:00</SelectItem>
+            </SelectContent>
+          </Select>
         )}
         <Input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="what to run or remind" className="h-auto rounded-[10px] px-2.5 py-2 text-[12px]" style={{ background: 'var(--bg-tertiary)', border: '0.5px solid var(--border)' }} />
         <div className="grid grid-cols-2 gap-2">
@@ -2545,7 +2569,7 @@ export interface MenuItem {
 
 /* ── Sidebar ───────────────────────────────────────────────── */
 
-export function BotRow({
+export const BotRow = React.memo(function BotRow({
   bot,
   active,
   unread,
@@ -2739,7 +2763,7 @@ export function BotRow({
       <ContextMenuContent className="w-52">{contextContent}</ContextMenuContent>
     </RadixContextMenu>
   )
-}
+})
 
 const HERO_LINES = [
   'books the offsite venue while you sleep.',

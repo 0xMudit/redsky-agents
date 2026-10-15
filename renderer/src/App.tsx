@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { scheduleLabel, stripThinking, timeLabel } from './format'
 import type { AppNotice, Bot, Connector, EventEnvelope, FileNode, HistoryTurn, JobTemplate, MemoryRow, ModelOption, Note, NoteHit, Room, Routine, SearchHit, SetupCheck } from './types'
@@ -227,13 +227,8 @@ export default function App(): React.JSX.Element {
   const [mode, setMode] = useState<Mode>(getStoredMode)
   const [scale, setScale] = useState<number>(getStoredScale)
   // Whether the Rooms/Schedules/Memory/… app tools drawer is open in the sidebar.
-  const [sectionsOpen, setSectionsOpen] = useState(() => {
-    try {
-      return localStorage.getItem('redsky.sections') !== '0'
-    } catch {
-      return true
-    }
-  })
+  // Always starts open; the user can collapse it within a session but it resets on reload.
+  const [sectionsOpen, setSectionsOpen] = useState(true)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string; before: boolean } | null>(null)
@@ -363,6 +358,10 @@ export default function App(): React.JSX.Element {
       return Boolean(m.text?.trim())
     })
   }, [selected?.thread])
+
+  // Defer the thread so React can yield frames to the streaming last message
+  // without blocking on re-rendering all historical messages at once.
+  const deferredThread = useDeferredValue(visibleThread)
 
   const unreadCount = useMemo(() => Object.values(unread).reduce((a, b) => a + b, 0), [unread])
   const unreadNotices = notices.filter((n) => !n.read).length
@@ -1061,11 +1060,6 @@ export default function App(): React.JSX.Element {
             <button
               onClick={() => {
                 setSectionsOpen(false)
-                try {
-                  localStorage.setItem('redsky.sections', '0')
-                } catch {
-                  /* ignore */
-                }
               }}
               title="Collapse app tools"
               className="w-full flex items-center justify-between rounded-[8px] pl-2.5 pr-1.5 py-1 hover:bg-[var(--sidebar-hover)] pressable"
@@ -1091,11 +1085,6 @@ export default function App(): React.JSX.Element {
               active={panel !== 'none'}
               onClick={() => {
                 setSectionsOpen(true)
-                try {
-                  localStorage.setItem('redsky.sections', '1')
-                } catch {
-                  /* ignore */
-                }
               }}
               title="App tools: rooms, schedules, memory, connectors, settings"
             >
@@ -1208,11 +1197,11 @@ export default function App(): React.JSX.Element {
                       {selected.job}
                     </p>
                   )}
-                  {visibleThread.map((m, i) => (
+                  {deferredThread.map((m, i) => (
                     <MessageBlock
                       key={m.id ?? `${selected.id}-${i}`}
                       role={m.role}
-                      text={m.role === 'assistant' ? stripThinking(m.text) : m.text}
+                      text={m.text}
                       kind={m.kind}
                       hue={selected.hue}
                       name={selected.name}

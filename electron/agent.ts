@@ -178,15 +178,32 @@ export function createAgent(deps: AgentDeps): AgentHandle {
     events.emit('event', { source: 'bot', bot: snapshot(bot) })
   }
 
+  // Maximum thread messages and computer events included in an IPC push.
+  // The renderer only renders the last N anyway; sending the whole history on
+  // every SSE token is the single biggest IPC bandwidth waste.
+  const SNAP_THREAD_MAX = 60
+  const SNAP_COMPUTER_MAX = 40
+
   function snapshot(bot: BotRecord): BotRecord {
+    // Assign ids once on the live object (mutates bot, but ids are stable).
     for (const m of bot.thread) {
       if (!m.id) m.id = newId('m')
-      if (m.role === 'assistant') m.text = stripThinking(m.text)
     }
+    // Only ship the tail of the thread and computer feed in the push payload.
+    // Older messages are available via rs:listBots (on demand) and are already
+    // in the renderer's local state from the last full sync.
+    const threadSlice = bot.thread.length <= SNAP_THREAD_MAX
+      ? bot.thread
+      : bot.thread.slice(-SNAP_THREAD_MAX)
+
     return {
       ...bot,
-      thread: bot.thread.map((m) => ({ ...m })),
-      computer: bot.computer.slice(-40),
+      thread: threadSlice.map((m) => ({
+        ...m,
+        // stripThinking is cheap on short text; skip it for user messages
+        text: m.role === 'assistant' ? stripThinking(m.text) : m.text,
+      })),
+      computer: bot.computer.slice(-SNAP_COMPUTER_MAX),
       roomIds: bot.roomIds ? [...bot.roomIds] : undefined,
     }
   }

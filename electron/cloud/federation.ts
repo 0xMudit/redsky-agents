@@ -20,6 +20,8 @@ export interface FederationStore {
   visibleTo: (botId: string) => FederatedFact[]
   publish: (payload: { key: string; value: string; sourceBotId?: string; sharedWith?: string[] }) => FederatedFact
   forget: (id: string) => void
+  /** Flush any pending debounced write immediately. Call on app.before-quit. */
+  flush: () => void
 }
 
 /** Pure visibility rule — see the module comment. */
@@ -69,5 +71,6 @@ export function createFederationStore(): FederationStore {
       rows = rows.filter((r) => r.id !== id)
       persist()
     },
+    flush: () => db.flush(),
   }
 }
