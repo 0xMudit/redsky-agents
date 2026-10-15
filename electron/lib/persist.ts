@@ -47,6 +47,8 @@ export function readJson<T>(file: string, fallback: T): T {
  *  - In-memory cache: read() returns the cached value without hitting disk every time.
  *  - Debounced writes: write() schedules a flush after `debounceMs` (default 200 ms),
  *    coalescing rapid successive writes into a single disk write.
+ *  - When `debounceMs` is 0 (e.g. in the test environment), write() flushes
+ *    synchronously so tests can read the file back from a fresh instance immediately.
  *  - flush(): immediate synchronous flush used on app quit / before-quit.
  */
 export class JsonStore<T> {
@@ -60,7 +62,11 @@ export class JsonStore<T> {
     private readonly fallback: T,
     opts: { debounceMs?: number } = {},
   ) {
-    this.debounceMs = opts.debounceMs ?? 200
+    // Default to 0 in the test environment (REDSKY_TEST_HOME is set by the test
+    // harness) so stores flush synchronously and persistence tests don't race
+    // against a pending timer.
+    const defaultMs = process.env.REDSKY_TEST_HOME !== undefined ? 0 : 200
+    this.debounceMs = opts.debounceMs ?? defaultMs
   }
 
   read(): T {
@@ -72,6 +78,13 @@ export class JsonStore<T> {
   write(value: T): void {
     this.cache = value
     this.dirty = true
+    if (this.debounceMs === 0) {
+      // Synchronous path: used in tests so a second store instance can read the
+      // file back without waiting for a timer to fire.
+      if (this.timer) { clearTimeout(this.timer); this.timer = null }
+      this._flush()
+      return
+    }
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
       this.timer = null
